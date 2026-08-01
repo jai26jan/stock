@@ -131,7 +131,8 @@
 
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; padding: 10px; background: #FAF9F5; border-radius: 8px; border: 1px solid #EEEAE0; }
   .row input, .row select { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 15px; outline: none; }
-  .row select { grid-column: 1 / -1; }
+  .row select:nth-of-type(2) { grid-column: 1 / -1; }
+  .row.row-with-custom input[placeholder="Custom size"] { grid-column: 1 / -1; }
   .row-bottom { display: flex; gap: 8px; grid-column: 1 / -1; align-items: center; justify-content: flex-end; }
 
   .modal-actions { display: flex; flex-direction: column-reverse; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #EEEAE0; }
@@ -156,6 +157,9 @@
 
   var STORAGE_KEY = "stockmap_db_v1";
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  var SIZE_PRESETS = [];
+  for (var _s = 0; _s < 15; _s++) { SIZE_PRESETS.push(_s + "-" + (_s + 1)); }
 
   var PIN_KEY = "stockmap_pin_v1";
   var unlocked = sessionStorage.getItem("stockmap_unlocked") === "1";
@@ -907,10 +911,43 @@
 
       var rowsWrap = el("div", {});
       rows.forEach(function (r, idx) {
-        var sizeInput = el("input", {
-          placeholder: "Size (e.g. M)", value: r.size,
-          onInput: function (e) { r.size = e.target.value; refreshButton(); }
-        });
+        var isCustom = r.size !== "" && SIZE_PRESETS.indexOf(r.size) === -1;
+
+        var sizeSelect = el("select", {
+          onChange: function (e) {
+            if (e.target.value === "__custom__") {
+              r.size = r._customDraft || "";
+              r._useCustom = true;
+            } else {
+              r.size = e.target.value;
+              r._useCustom = false;
+            }
+            refreshButton();
+            ui.modal = modalShell("Add a product", body());
+            render();
+          }
+        }, [el("option", { value: "" }, ["Select size…"])].concat(
+          SIZE_PRESETS.map(function (sz) {
+            var opt = el("option", { value: sz }, [sz]);
+            if (r.size === sz && !r._useCustom) opt.selected = true;
+            return opt;
+          })
+        ).concat([
+          (function () {
+            var opt = el("option", { value: "__custom__" }, ["Custom…"]);
+            if (r._useCustom || isCustom) opt.selected = true;
+            return opt;
+          })()
+        ]));
+
+        var customInput = null;
+        if (r._useCustom || isCustom) {
+          customInput = el("input", {
+            placeholder: "Custom size", value: r.size,
+            onInput: function (e) { r.size = e.target.value; r._customDraft = e.target.value; refreshButton(); }
+          });
+        }
+
         var qtyInput = el("input", {
           type: "number", min: "0", placeholder: "Qty", value: r.qty,
           onInput: function (e) { r.qty = e.target.value; refreshButton(); }
@@ -947,8 +984,9 @@
         }, ["🗑"]);
         if (rows.length === 1) removeBtn.disabled = true;
 
-        rowsWrap.appendChild(el("div", { class: "row" }, [
-          sizeInput, qtyInput, locSelect,
+        rowsWrap.appendChild(el("div", { class: "row" + (customInput ? " row-with-custom" : "") }, [
+          sizeSelect, qtyInput, locSelect,
+          customInput,
           el("div", { class: "row-bottom" }, [removeBtn])
         ]));
       });
