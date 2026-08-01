@@ -489,7 +489,7 @@
         class: "btn btn-primary",
         id: "save-product-btn",
         onClick: function () {
-          if (!canSave) return;
+          if (!computeCanSave()) return;
           var item = { id: uid(), sku: sku.trim(), name: name.trim(), category: category.trim(), createdAt: Date.now() };
           db.items.push(item);
           rows.forEach(function (r) {
