@@ -61,12 +61,17 @@
   .card-total { margin-left: auto; text-align: right; }
   .card-total-num { font-size: 20px; font-weight: 700; color: var(--amber-deep); display: block; }
   .card-total-label { font-size: 10px; color: var(--slate); text-transform: uppercase; }
-  .sold-section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px dashed #E4E0D3; }
-  .sold-label { font-size: 10px; color: var(--slate); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; font-weight: 700; }
   .sold-row { display: flex; flex-wrap: wrap; gap: 8px; }
   .sold-chip { display: flex; align-items: center; gap: 8px; background: #F4F2EC; border: 1px solid #E4E0D3;
                border-radius: 20px; padding: 4px 6px 4px 10px; font-size: 11.5px; }
   .sold-chip-size { font-weight: 700; color: var(--ink); }
+
+  .sold-total-banner { display: flex; flex-direction: column; align-items: center; background: #F4F2EC;
+                        border-radius: 10px; padding: 16px; margin-bottom: 18px; }
+  .sold-total-num { font-size: 26px; font-weight: 700; color: var(--amber-deep); }
+  .sold-total-label { font-size: 11px; color: var(--slate); text-transform: uppercase; margin-top: 2px; }
+  .sold-block { margin-bottom: 16px; }
+  .sold-block-title { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
 
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
@@ -327,6 +332,7 @@
           }
         }, ["🔒"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageLocationsModal(); render(); } }, ["📍"]),
+        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = soldModal(); render(); } }, ["🧾"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
     ]);
@@ -460,6 +466,9 @@
     newQty = Math.max(0, Math.floor(Number(newQty) || 0));
     soldEntry.qty = newQty;
     saveDB(db);
+    if (ui.modal) {
+      ui.modal = soldModal();
+    }
     render();
   }
 
@@ -515,24 +524,6 @@
         ])
       ])
     ]);
-
-    var soldForItem = db.sold.filter(function (s) { return s.itemId === item.id; });
-    if (soldForItem.length > 0) {
-      var soldRow = el("div", { class: "sold-row" });
-      soldForItem
-        .slice()
-        .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
-        .forEach(function (s) {
-          soldRow.appendChild(el("div", { class: "sold-chip" }, [
-            el("span", { class: "sold-chip-size" }, [s.size]),
-            soldStepper(s)
-          ]));
-        });
-      card.appendChild(el("div", { class: "sold-section" }, [
-        el("div", { class: "sold-label" }, ["SOLD"]),
-        soldRow
-      ]));
-    }
 
     var byLocation = {};
     rows.forEach(function (r) {
@@ -710,6 +701,62 @@
     }
 
     return modalShell("Edit product", body());
+  }
+
+  function soldModal() {
+    function body() {
+      var itemsWithSales = db.items.filter(function (item) {
+        return db.sold.some(function (s) { return s.itemId === item.id; });
+      });
+
+      if (itemsWithSales.length === 0) {
+        return [
+          el("div", { class: "empty-state", style: "padding:30px 10px;" }, [
+            el("div", {}, ["🧾"]),
+            el("h2", {}, ["No sales yet"]),
+            el("p", {}, ["When you reduce stock quantity, it's logged here as sold. You'll be able to see and edit totals per product and size."])
+          ]),
+          el("div", { class: "modal-actions" }, [
+            el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+          ])
+        ];
+      }
+
+      var totalSold = db.sold.reduce(function (s, r) { return s + r.qty; }, 0);
+      var wrap = el("div", {}, [
+        el("div", { class: "sold-total-banner" }, [
+          el("span", { class: "sold-total-num" }, [String(totalSold)]),
+          el("span", { class: "sold-total-label" }, ["total units sold"])
+        ])
+      ]);
+
+      itemsWithSales.forEach(function (item) {
+        var entries = db.sold.filter(function (s) { return s.itemId === item.id; });
+        var block = el("div", { class: "sold-block" }, [
+          el("div", { class: "sold-block-title" }, [item.name + (item.sku ? " · " + item.sku : "")])
+        ]);
+        var row = el("div", { class: "sold-row" });
+        entries
+          .slice()
+          .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
+          .forEach(function (s) {
+            row.appendChild(el("div", { class: "sold-chip" }, [
+              el("span", { class: "sold-chip-size" }, [s.size]),
+              soldStepper(s)
+            ]));
+          });
+        block.appendChild(row);
+        wrap.appendChild(block);
+      });
+
+      wrap.appendChild(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+      ]));
+
+      return [wrap];
+    }
+
+    return modalShell("Sold", body());
   }
 
   function manageLocationsModal(initialAddingNew) {
