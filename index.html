@@ -54,7 +54,7 @@
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
   .card-actions-top { position: absolute; top: 10px; right: 10px; display: flex; gap: 2px; }
-  .card-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 12px; padding-right: 56px;
+  .card-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 12px; padding-right: 78px;
                border-bottom: 1px dashed #E4E0D3; margin-bottom: 12px; flex-wrap: wrap; }
   .card-eyebrow { font-size: 10.5px; color: var(--slate); text-transform: uppercase; }
   .card-title { font-size: 17px; margin: 2px 0 0; font-weight: 700; }
@@ -72,6 +72,9 @@
   .sold-total-label { font-size: 11px; color: var(--slate); text-transform: uppercase; margin-top: 2px; }
   .sold-block { margin-bottom: 16px; }
   .sold-block-title { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+
+  .copy-preview { margin: 4px 0 6px; }
+  .copy-preview-label { font-size: 12px; color: var(--slate); margin-bottom: 8px; font-weight: 600; }
 
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
@@ -508,6 +511,10 @@
         }, ["✏️"]),
         el("button", {
           class: "icon-btn",
+          onClick: function () { ui.modal = copyItemModal(item); render(); }
+        }, ["📋"]),
+        el("button", {
+          class: "icon-btn",
           onClick: function () {
             db.items = db.items.filter(function (i) { return i.id !== item.id; });
             db.stock = db.stock.filter(function (s) { return s.itemId !== item.id; });
@@ -592,6 +599,68 @@
         ])
       ]);
     };
+  }
+
+  function copyItemModal(sourceItem) {
+    var name = sourceItem.name + " (copy)";
+    var sku = "";
+    var category = sourceItem.category || "";
+    var sourceRows = db.stock.filter(function (s) { return s.itemId === sourceItem.id; });
+
+    function body() {
+      var nameInput = el("input", {
+        placeholder: "Product name", value: name,
+        onInput: function (e) {
+          name = e.target.value;
+          var btn = document.getElementById("save-copy-btn");
+          if (btn) btn.disabled = !name.trim();
+        }
+      });
+      var skuInput = el("input", { placeholder: "TSH-002 (optional)", value: sku, onInput: function (e) { sku = e.target.value; } });
+      var catInput = el("input", { placeholder: "T-Shirts", value: category, onInput: function (e) { category = e.target.value; } });
+
+      var preview = el("div", { class: "copy-preview" }, [
+        el("div", { class: "copy-preview-label" }, ["Will copy " + sourceRows.length + " " + (sourceRows.length === 1 ? "entry" : "entries") + ":"]),
+        el("div", { class: "sold-row" }, sourceRows.map(function (r) {
+          var loc = db.locations.find(function (l) { return l.id === r.locationId; });
+          return el("div", { class: "sold-chip" }, [
+            el("span", { class: "sold-chip-size" }, [r.size]),
+            el("span", {}, [(loc ? loc.code : "?") + " · " + r.qty])
+          ]);
+        }))
+      ]);
+
+      var saveBtn = el("button", {
+        class: "btn btn-primary",
+        id: "save-copy-btn",
+        onClick: function () {
+          if (!name.trim()) return;
+          var newItem = { id: uid(), sku: sku.trim(), name: name.trim(), category: category.trim(), createdAt: Date.now() };
+          db.items.push(newItem);
+          sourceRows.forEach(function (r) {
+            db.stock.push({ id: uid(), itemId: newItem.id, locationId: r.locationId, size: r.size, qty: r.qty });
+          });
+          saveDB(db);
+          closeModal();
+        }
+      }, ["Create copy"]);
+      if (!name.trim()) saveBtn.disabled = true;
+
+      return [
+        el("label", { class: "field" }, [el("span", {}, ["New product name"]), nameInput]),
+        el("div", { class: "grid-2" }, [
+          el("label", { class: "field" }, [el("span", {}, ["SKU (optional)"]), skuInput]),
+          el("label", { class: "field" }, [el("span", {}, ["Category (optional)"]), catInput])
+        ]),
+        preview,
+        el("div", { class: "modal-actions" }, [
+          saveBtn,
+          el("button", { class: "btn btn-ghost", onClick: closeModal }, ["Cancel"])
+        ])
+      ];
+    }
+
+    return modalShell("Duplicate " + sourceItem.name, body());
   }
 
   function editItemModal(item) {
