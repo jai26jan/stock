@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>StockMap Inventory</title>
+<meta name="description" content="Track exactly where each size is stored, by location." />
+
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1B2430" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="StockMap" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.js"></script>
+
+<style>
+  :root {
+    --ink: #1B2430; --ink-soft: #2A3444; --amber: #E8A33D; --amber-deep: #C97F1E;
+    --paper: #F2F0EA; --slate: #5C6470; --green: #4A7C59; --red: #B5493A;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: var(--paper); overscroll-behavior-y: none; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; color: var(--ink);
+         padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  #root { min-height: 100vh; }
+
+  .app-shell { background: var(--paper); min-height: 100vh; color: var(--ink); padding-bottom: 60px; }
+  .loading-shell { display: flex; align-items: center; justify-content: center; height: 100vh; }
+  .loading-mark { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--slate); }
+
+  .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px;
+            padding-top: calc(14px + env(safe-area-inset-top)); background: var(--ink); color: var(--paper);
+            position: sticky; top: 0; z-index: 20; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark { background: var(--amber); color: var(--ink); width: 34px; height: 34px; border-radius: 8px;
+                display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .brand-title { font-family: 'Space Mono', monospace; font-weight: 700; letter-spacing: 0.06em; font-size: 15px; }
+  .brand-sub { font-size: 10.5px; color: #9AA5B5; letter-spacing: 0.03em; }
+  .topbar-actions { display: flex; gap: 8px; }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
+         padding: 9px 12px; border-radius: 8px; border: 1px solid transparent; cursor: pointer;
+         transition: transform .05s ease, opacity .15s ease; white-space: nowrap; }
+  .btn:active { transform: scale(0.96); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary { background: var(--amber); color: var(--ink); }
+  .btn-ghost { background: transparent; color: var(--paper); border-color: rgba(242,240,234,.3); }
+  .modal-actions .btn-ghost { color: var(--ink); border-color: #D8D4C8; }
+  .btn-sm { padding: 6px 10px; font-size: 12px; }
+  .btn-full { width: 100%; justify-content: center; }
+
+  .stats-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: #DAD6C9;
+                 border-bottom: 1px solid #DAD6C9; }
+  .stat { background: var(--paper); padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+  .stat-num { font-family: 'Space Mono', monospace; font-size: 22px; font-weight: 700; }
+  .stat-label { font-size: 10.5px; color: var(--slate); text-transform: uppercase; letter-spacing: .04em; }
+  .stat-warn .stat-num { color: var(--red); }
+
+  .filters { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 0; }
+  .search-box { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #DAD6C9;
+                border-radius: 8px; padding: 10px 12px; color: var(--slate); }
+  .search-box input { border: none; outline: none; flex: 1; font-size: 15px; background: transparent; }
+  .filters select { border: 1px solid #DAD6C9; border-radius: 8px; padding: 10px; font-size: 14px;
+                     background: #fff; color: var(--ink); width: 100%; }
+
+  .content { padding: 16px; }
+  .card-list { display: flex; flex-direction: column; gap: 14px; }
+  .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; position: relative; }
+  .card-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 12px;
+               border-bottom: 1px dashed #E4E0D3; margin-bottom: 12px; flex-wrap: wrap; }
+  .card-eyebrow { font-family: 'Space Mono', monospace; font-size: 10.5px; color: var(--slate);
+                  letter-spacing: .03em; text-transform: uppercase; }
+  .card-title { font-size: 17px; margin: 2px 0 0; font-weight: 700; }
+  .card-total { margin-left: auto; text-align: right; display: flex; flex-direction: column; }
+  .card-total-num { font-family: 'Space Mono', monospace; font-size: 20px; font-weight: 700; color: var(--amber-deep); }
+  .card-total-label { font-size: 10px; color: var(--slate); text-transform: uppercase; }
+  .card-delete { color: var(--slate); position: absolute; top: 12px; right: 12px; }
+
+  .size-groups { display: flex; flex-direction: column; gap: 12px; }
+  .size-group { display: flex; gap: 12px; align-items: flex-start; }
+  .size-badge { min-width: 36px; height: 36px; background: var(--ink); color: var(--paper); border-radius: 8px;
+                display: flex; align-items: center; justify-content: center; font-family: 'Space Mono', monospace;
+                font-weight: 700; font-size: 12px; flex-shrink: 0; }
+  .bintag-row { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
+  .bintag-wrap { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  .bintag { position: relative; background: repeating-linear-gradient(135deg,#FFF7E8,#FFF7E8 6px,#FCEFD4 6px,#FCEFD4 12px);
+            border: 1.5px solid var(--amber-deep); border-radius: 6px; padding: 6px 10px 6px 14px; min-width: 80px; text-align: center; }
+  .bintag-notch { position: absolute; left: -5px; top: 50%; transform: translateY(-50%); width: 9px; height: 9px;
+                  background: var(--paper); border: 1.5px solid var(--amber-deep); border-radius: 50%; }
+  .bintag-code { font-family: 'Space Mono', monospace; font-weight: 700; font-size: 12.5px; color: var(--ink); }
+  .bintag-label { font-size: 9.5px; color: var(--slate); margin-top: 1px; }
+  .bintag-meta { display: flex; align-items: center; gap: 4px; }
+
+  .pill { font-size: 10.5px; font-weight: 600; padding: 3px 7px; border-radius: 20px; background: #EAF2EC;
+          color: var(--green); display: inline-flex; align-items: center; gap: 4px; }
+  .pill-low { background: #FCEEDC; color: var(--amber-deep); }
+  .pill-out { background: #F8E4E0; color: var(--red); }
+
+  .icon-btn { background: transparent; border: none; cursor: pointer; color: var(--slate);
+              display: flex; align-items: center; justify-content: center; padding: 6px; border-radius: 6px; }
+  .icon-btn:active { background: #EFEBDD; }
+  .icon-btn.tiny { padding: 2px; }
+  .icon-btn:disabled { opacity: .3; cursor: not-allowed; }
+
+  .empty-state { display: flex; flex-direction: column; align-items: center; text-align: center;
+                 padding: 60px 20px; gap: 10px; color: var(--slate); }
+  .empty-state h2 { color: var(--ink); margin: 6px 0 0; font-size: 18px; }
+  .empty-state p { max-width: 320px; font-size: 13.5px; line-height: 1.5; margin: 0 0 8px; }
+  .empty-tag { position: relative; border: 1.5px dashed #C9C2AC; border-radius: 6px; padding: 10px 20px 10px 24px; margin-bottom: 8px; }
+  .empty-tag .bintag-code { color: #C9C2AC; }
+  .empty-inline { text-align: center; padding: 40px 0; color: var(--slate); font-size: 13.5px; }
+
+  .save-indicator { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom)); right: 14px; font-size: 10.5px;
+                     color: var(--slate); background: #fff; border: 1px solid #E4E0D3; padding: 4px 9px; border-radius: 20px; }
+
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(27,36,48,.55); display: flex; align-items: flex-end;
+                     justify-content: center; z-index: 50; }
+  .modal { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; max-height: 88vh;
+           overflow-y: auto; padding-bottom: env(safe-area-inset-bottom); }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px;
+                border-bottom: 1px solid #EEEAE0; position: sticky; top: 0; background: #fff; }
+  .modal-head h3 { margin: 0; font-size: 16px; }
+  .modal-body { padding: 16px 18px 22px; }
+
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; font-size: 12px; color: var(--slate); font-weight: 600; }
+  .field input, .field select { border: 1px solid #DAD6C9; border-radius: 8px; padding: 11px; font-size: 16px; color: var(--ink); outline: none; }
+  .field input:focus, .field select:focus { border-color: var(--amber-deep); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .rows-head { display: none; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; padding: 10px;
+         background: #FAF9F5; border-radius: 8px; border: 1px solid #EEEAE0; }
+  .row input, .row select { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 15px; color: var(--ink); outline: none; grid-column: span 1; }
+  .row select { grid-column: 1 / -1; }
+  .row-bottom { display: flex; gap: 8px; grid-column: 1 / -1; align-items: center; }
+  .row-bottom input { flex: 1; }
+
+  .modal-actions { display: flex; flex-direction: column-reverse; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #EEEAE0; }
+  .modal-actions .btn { width: 100%; justify-content: center; }
+
+  .install-banner { display: flex; align-items: center; gap: 10px; background: var(--ink); color: var(--paper);
+                     padding: 10px 16px; font-size: 12.5px; }
+  .install-banner button { margin-left: auto; background: var(--amber); color: var(--ink); border: none;
+                            padding: 7px 12px; border-radius: 7px; font-weight: 700; font-size: 12px; }
+  .install-banner .dismiss { background: transparent; color: var(--paper); opacity: .7; padding: 4px; }
+
+  @media (min-width: 700px) {
+    .row { grid-template-columns: 1fr 1fr; }
+    .row select { grid-column: span 2; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+const { Plus, MapPin, Package, Trash2, X, Search, Layers, AlertTriangle, Download } = lucide;
+
+const STORAGE_KEY = "stockmap_db_v1";
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const emptyDB = { items: [], locations: [], stock: [] };
+
+function useDB() {
+  const [db, setDB] = useState(emptyDB);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setDB(JSON.parse(raw));
+    } catch (e) {}
+    setLoaded(true);
+  }, []);
+
+  const persist = (next) => {
+    setDB(next);
+    setSaving(true);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (e) {}
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => setSaving(false), 400);
+  };
+
+  return { db, loaded, saving, persist };
+}
+
+function BinTag({ code, label }) {
+  return (
+    <div className="bintag">
+      <div className="bintag-notch" />
+      <div className="bintag-code">{code}</div>
+      {label ? <div className="bintag-label">{label}</div> : null}
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function AddLocationModal({ onClose, onSave }) {
+  const [code, setCode] = useState("");
+  const [label, setLabel] = useState("");
+  return (
+    <Modal title="Add a location" onClose={onClose}>
+      <label className="field">
+        <span>Location code</span>
+        <input autoFocus placeholder="e.g. A1-03" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} />
+      </label>
+      <label className="field">
+        <span>Description (optional)</span>
+        <input placeholder="e.g. Warehouse A, Rack 1, Shelf 3" value={label} onChange={(e) => setLabel(e.target.value)} />
+      </label>
+      <div className="modal-actions">
+        <button className="btn btn-primary" disabled={!code.trim()} onClick={() => code.trim() && onSave({ code: code.trim(), label: label.trim() })}>Add location</button>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+function AddItemModal({ locations, onClose, onSave, onAddLocation }) {
+  const [sku, setSku] = useState("");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [rows, setRows] = useState([{ id: uid(), size: "", locationId: "", qty: "" }]);
+  const [showAddLoc, setShowAddLoc] = useState(false);
+
+  const updateRow = (id, patch) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((rs) => [...rs, { id: uid(), size: "", locationId: "", qty: "" }]);
+  const removeRow = (id) => setRows((rs) => rs.filter((r) => r.id !== id));
+
+  const canSave = name.trim() && rows.some((r) => r.size.trim() && r.locationId && r.qty !== "" && Number(r.qty) >= 0);
+
+  return (
+    <>
+      <Modal title="Add a product" onClose={onClose}>
+        <div className="grid-2">
+          <label className="field"><span>SKU (optional)</span><input placeholder="TSH-001" value={sku} onChange={(e) => setSku(e.target.value)} /></label>
+          <label className="field"><span>Category (optional)</span><input placeholder="T-Shirts" value={category} onChange={(e) => setCategory(e.target.value)} /></label>
+        </div>
+        <label className="field"><span>Product name</span><input autoFocus placeholder="Classic Crew Tee" value={name} onChange={(e) => setName(e.target.value)} /></label>
+
+        {rows.map((r) => (
+          <div className="row" key={r.id}>
+            <input placeholder="Size (e.g. M)" value={r.size} onChange={(e) => updateRow(r.id, { size: e.target.value })} />
+            <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={(e) => updateRow(r.id, { qty: e.target.value })} />
+            <select value={r.locationId} onChange={(e) => {
+              if (e.target.value === "__new__") { setShowAddLoc(true); return; }
+              updateRow(r.id, { locationId: e.target.value });
+            }}>
+              <option value="">Select location…</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.code}{l.label ? ` — ${l.label}` : ""}</option>)}
+              <option value="__new__">+ New location…</option>
+            </select>
+            <div className="row-bottom">
+              <button className="icon-btn" onClick={() => removeRow(r.id)} disabled={rows.length === 1} aria-label="Remove"><Trash2 size={16} /></button>
+            </div>
+          </div>
+        ))}
+        <button className="btn btn-ghost btn-sm" onClick={addRow}><Plus size={14} /> Add another size / location</button>
+
+        <div className="modal-actions">
+          <button className="btn btn-primary" disabled={!canSave} onClick={() => onSave({
+            sku: sku.trim(), name: name.trim(), category: category.trim(),
+            rows: rows.filter((r) => r.size.trim() && r.locationId && r.qty !== "" && Number(r.qty) >= 0)
+          })}>Save product</button>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </Modal>
+      {showAddLoc && (
+        <AddLocationModal onClose={() => setShowAddLoc(false)} onSave={(loc) => {
+          const newLoc = onAddLocation(loc);
+          setShowAddLoc(false);
+          if (newLoc) {
+            setRows((rs) => {
+              const lastEmpty = [...rs].reverse().find((r) => !r.locationId);
+              if (!lastEmpty) return rs;
+              return rs.map((r) => r.id === lastEmpty.id ? { ...r, locationId: newLoc.id } : r);
+            });
+          }
+        }} />
+      )}
+    </>
+  );
+}
+
+function StockPill({ qty }) {
+  const low = qty <= 3 && qty > 0;
+  const out = qty === 0;
+  return <span className={"pill" + (out ? " pill-out" : low ? " pill-low" : "")}>{out && <AlertTriangle size={12} />}{qty} {qty === 1 ? "unit" : "units"}</span>;
+}
+
+function ItemCard({ item, stockRows, locationsById, onDeleteRow, onDeleteItem }) {
+  const totalQty = stockRows.reduce((s, r) => s + r.qty, 0);
+  const bySize = useMemo(() => {
+    const map = {};
+    stockRows.forEach((r) => { if (!map[r.size]) map[r.size] = []; map[r.size].push(r); });
+    return map;
+  }, [stockRows]);
+
+  return (
+    <div className="card">
+      <button className="icon-btn card-delete" onClick={() => onDeleteItem(item.id)} aria-label="Delete product"><Trash2 size={16} /></button>
+      <div className="card-head">
+        <div>
+          <div className="card-eyebrow">{item.sku ? item.sku : "NO-SKU"}{item.category ? ` · ${item.category}` : ""}</div>
+          <h3 className="card-title">{item.name}</h3>
+        </div>
+        <div className="card-total">
+          <span className="card-total-num">{totalQty}</span>
+          <span className="card-total-label">total units</span>
+        </div>
+      </div>
+      <div className="size-groups">
+        {Object.keys(bySize).sort().map((size) => (
+          <div className="size-group" key={size}>
+            <div className="size-badge">{size}</div>
+            <div className="bintag-row">
+              {bySize[size].map((r) => {
+                const loc = locationsById[r.locationId];
+                return (
+                  <div className="bintag-wrap" key={r.id}>
+                    <BinTag code={loc?.code || "?"} label={loc?.label} />
+                    <div className="bintag-meta">
+                      <StockPill qty={r.qty} />
+                      <button className="icon-btn tiny" onClick={() => onDeleteRow(r.id)} aria-label="Remove"><X size={12} /></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InstallBanner() {
+  const [deferred, setDeferred] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+  useEffect(() => {
+    const handler = (e) => { e.preventDefault(); setDeferred(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  if (isStandalone || dismissed) return null;
+  if (!deferred && !isIOS) return null;
+
+  return (
+    <div className="install-banner">
+      <Download size={16} />
+      {deferred
+        ? <span>Install StockMap for the full app experience</span>
+        : <span>Tap Share → "Add to Home Screen" to install</span>}
+      {deferred && <button onClick={async () => { deferred.prompt(); await deferred.userChoice; setDeferred(null); }}>Install</button>}
+      <button className="dismiss" onClick={() => setDismissed(true)}><X size={14} /></button>
+    </div>
+  );
+}
+
+function EmptyState({ onAdd }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-tag"><div className="bintag-notch" /><div className="bintag-code">— —</div></div>
+      <h2>No products yet</h2>
+      <p>Add your first product, give it sizes, and pin exactly which shelf, rack, or bin each size lives in.</p>
+      <button className="btn btn-primary" onClick={onAdd}><Plus size={16} /> Add your first product</button>
+    </div>
+  );
+}
+
+function App() {
+  const { db, loaded, saving, persist } = useDB();
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [showAddLoc, setShowAddLoc] = useState(false);
+  const [query, setQuery] = useState("");
+  const [locationFilter, setLocationFilter] = useState("");
+
+  const locationsById = useMemo(() => Object.fromEntries(db.locations.map((l) => [l.id, l])), [db.locations]);
+
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return db.items.filter((it) => {
+      const matchesQuery = !q || it.name.toLowerCase().includes(q) || (it.sku || "").toLowerCase().includes(q) || (it.category || "").toLowerCase().includes(q);
+      const rows = db.stock.filter((s) => s.itemId === it.id);
+      const matchesLoc = !locationFilter || rows.some((r) => r.locationId === locationFilter);
+      return matchesQuery && matchesLoc;
+    });
+  }, [db.items, db.stock, query, locationFilter]);
+
+  const stats = useMemo(() => ({
+    products: db.items.length,
+    locations: db.locations.length,
+    totalUnits: db.stock.reduce((s, r) => s + r.qty, 0),
+    lowCount: db.stock.filter((r) => r.qty <= 3).length,
+  }), [db]);
+
+  const addLocation = (loc) => {
+    const newLoc = { id: uid(), code: loc.code, label: loc.label };
+    persist({ ...db, locations: [...db.locations, newLoc] });
+    return newLoc;
+  };
+
+  const addItem = ({ sku, name, category, rows }) => {
+    const newItem = { id: uid(), sku, name, category, createdAt: Date.now() };
+    const newStock = rows.map((r) => ({ id: uid(), itemId: newItem.id, locationId: r.locationId, size: r.size.trim(), qty: Number(r.qty) }));
+    persist({ ...db, items: [...db.items, newItem], stock: [...db.stock, ...newStock] });
+    setShowAddItem(false);
+  };
+
+  const deleteItem = (itemId) => persist({ ...db, items: db.items.filter((i) => i.id !== itemId), stock: db.stock.filter((s) => s.itemId !== itemId) });
+  const deleteStockRow = (stockId) => persist({ ...db, stock: db.stock.filter((s) => s.id !== stockId) });
+
+  if (!loaded) {
+    return <div className="app-shell loading-shell"><div className="loading-mark"><Package size={28} /><span>Loading inventory…</span></div></div>;
+  }
+
+  return (
+    <div className="app-shell">
+      <InstallBanner />
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark"><Layers size={18} /></div>
+          <div><div className="brand-title">STOCKMAP</div><div className="brand-sub">size &amp; location tracker</div></div>
+        </div>
+        <div className="topbar-actions">
+          <button className="btn btn-ghost" onClick={() => setShowAddLoc(true)}><MapPin size={15} /></button>
+          <button className="btn btn-primary" onClick={() => setShowAddItem(true)}><Plus size={15} /> Add</button>
+        </div>
+      </header>
+
+      <div className="stats-strip">
+        <div className="stat"><span className="stat-num">{stats.products}</span><span className="stat-label">Products</span></div>
+        <div className="stat"><span className="stat-num">{stats.locations}</span><span className="stat-label">Locations</span></div>
+        <div className="stat"><span className="stat-num">{stats.totalUnits}</span><span className="stat-label">Total units</span></div>
+        <div className="stat stat-warn"><span className="stat-num">{stats.lowCount}</span><span className="stat-label">Low / out lines</span></div>
+      </div>
+
+      <div className="filters">
+        <div className="search-box"><Search size={16} /><input placeholder="Search product, SKU, category…" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+        <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}>
+          <option value="">All locations</option>
+          {db.locations.map((l) => <option key={l.id} value={l.id}>{l.code}{l.label ? ` — ${l.label}` : ""}</option>)}
+        </select>
+      </div>
+
+      <main className="content">
+        {db.items.length === 0 ? <EmptyState onAdd={() => setShowAddItem(true)} />
+          : filteredItems.length === 0 ? <div className="empty-inline">No products match your search.</div>
+          : <div className="card-list">
+              {filteredItems.map((item) => (
+                <ItemCard key={item.id} item={item} stockRows={db.stock.filter((s) => s.itemId === item.id)}
+                  locationsById={locationsById} onDeleteRow={deleteStockRow} onDeleteItem={deleteItem} />
+              ))}
+            </div>}
+      </main>
+
+      <div className="save-indicator">{saving ? "Saving…" : "Saved on this device"}</div>
+
+      {showAddItem && <AddItemModal locations={db.locations} onClose={() => setShowAddItem(false)} onSave={addItem} onAddLocation={addLocation} />}
+      {showAddLoc && <AddLocationModal onClose={() => setShowAddLoc(false)} onSave={(loc) => { addLocation(loc); setShowAddLoc(false); }} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>

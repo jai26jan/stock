@@ -1,0 +1,15 @@
+{
+  "name": "StockMap Inventory",
+  "short_name": "StockMap",
+  "description": "Track exactly where each size is stored, by location.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F2F0EA",
+  "theme_color": "#1B2430",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
