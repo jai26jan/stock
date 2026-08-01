@@ -137,6 +137,9 @@
 (function () {
   "use strict";
 
+  var STORAGE_KEY = "stockmap_db_v1";
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
   var PIN_KEY = "stockmap_pin_v1";
   var unlocked = sessionStorage.getItem("stockmap_unlocked") === "1";
 
