@@ -61,13 +61,18 @@
   .card-total { margin-left: auto; text-align: right; }
   .card-total-num { font-size: 20px; font-weight: 700; color: var(--amber-deep); display: block; }
   .card-total-label { font-size: 10px; color: var(--slate); text-transform: uppercase; }
-  .sold-section { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #E4E0D3; }
+  .sold-section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px dashed #E4E0D3; }
   .sold-label { font-size: 10px; color: var(--slate); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; font-weight: 700; }
   .sold-row { display: flex; flex-wrap: wrap; gap: 8px; }
-  .sold-chip { display: flex; align-items: center; gap: 6px; background: #F4F2EC; border: 1px solid #E4E0D3;
-               border-radius: 20px; padding: 5px 10px; font-size: 11.5px; }
+  .sold-chip { display: flex; align-items: center; gap: 8px; background: #F4F2EC; border: 1px solid #E4E0D3;
+               border-radius: 20px; padding: 4px 6px 4px 10px; font-size: 11.5px; }
   .sold-chip-size { font-weight: 700; color: var(--ink); }
-  .sold-chip-qty { color: var(--slate); }
+
+  .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
+  .loc-row input:first-child { font-weight: 700; text-transform: uppercase; }
+  .loc-add-form { background: #FAF9F5; border: 1px solid #EEEAE0; border-radius: 8px; padding: 12px; margin: 6px 0 4px; }
+  .loc-add-form .field { margin-bottom: 10px; }
 
   .size-group { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
   .size-badge { min-width: 36px; height: 36px; background: var(--ink); color: var(--paper); border-radius: 8px;
@@ -321,7 +326,7 @@
             renderLock();
           }
         }, ["🔒"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = addLocationModal(); render(); } }, ["📍"]),
+        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageLocationsModal(); render(); } }, ["📍"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
     ]);
@@ -451,6 +456,36 @@
     return wrap;
   }
 
+  function updateSold(soldEntry, newQty) {
+    newQty = Math.max(0, Math.floor(Number(newQty) || 0));
+    soldEntry.qty = newQty;
+    saveDB(db);
+    render();
+  }
+
+  function soldStepper(soldEntry) {
+    var minusBtn = el("button", {
+      class: "icon-btn tiny stepper-btn",
+      onClick: function () { updateSold(soldEntry, soldEntry.qty - 1); }
+    }, ["−"]);
+    if (soldEntry.qty <= 0) minusBtn.disabled = true;
+
+    var qtyInput = el("input", {
+      class: "stepper-input",
+      type: "number", min: "0", value: soldEntry.qty,
+      onInput: function (e) { soldEntry.qty = Math.max(0, Math.floor(Number(e.target.value) || 0)); },
+      onBlur: function (e) { updateSold(soldEntry, e.target.value); },
+      onClick: function (e) { e.stopPropagation(); }
+    });
+
+    var plusBtn = el("button", {
+      class: "icon-btn tiny stepper-btn",
+      onClick: function () { updateSold(soldEntry, soldEntry.qty + 1); }
+    }, ["+"]);
+
+    return el("div", { class: "qty-stepper" }, [minusBtn, qtyInput, plusBtn]);
+  }
+
   function itemCard(item, rows, locMap) {
     var card = el("div", { class: "card" }, [
       el("div", { class: "card-actions-top" }, [
@@ -480,6 +515,24 @@
         ])
       ])
     ]);
+
+    var soldForItem = db.sold.filter(function (s) { return s.itemId === item.id; });
+    if (soldForItem.length > 0) {
+      var soldRow = el("div", { class: "sold-row" });
+      soldForItem
+        .slice()
+        .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
+        .forEach(function (s) {
+          soldRow.appendChild(el("div", { class: "sold-chip" }, [
+            el("span", { class: "sold-chip-size" }, [s.size]),
+            soldStepper(s)
+          ]));
+        });
+      card.appendChild(el("div", { class: "sold-section" }, [
+        el("div", { class: "sold-label" }, ["SOLD"]),
+        soldRow
+      ]));
+    }
 
     var byLocation = {};
     rows.forEach(function (r) {
@@ -525,24 +578,6 @@
       ]));
     });
 
-    var soldForItem = db.sold.filter(function (s) { return s.itemId === item.id && s.qty > 0; });
-    if (soldForItem.length > 0) {
-      var soldRow = el("div", { class: "sold-row" });
-      soldForItem
-        .slice()
-        .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
-        .forEach(function (s) {
-          soldRow.appendChild(el("div", { class: "sold-chip" }, [
-            el("span", { class: "sold-chip-size" }, [s.size]),
-            el("span", { class: "sold-chip-qty" }, [String(s.qty) + " sold"])
-          ]));
-        });
-      card.appendChild(el("div", { class: "sold-section" }, [
-        el("div", { class: "sold-label" }, ["SOLD"]),
-        soldRow
-      ]));
-    }
-
     return card;
   }
 
@@ -579,6 +614,71 @@
         }
       });
 
+      var itemRows = db.stock.filter(function (s) { return s.itemId === item.id; });
+      var rowsWrap = el("div", {});
+
+      itemRows.forEach(function (r) {
+        var sizeInput = el("input", {
+          placeholder: "Size (e.g. M)", value: r.size,
+          onInput: function (e) { r.size = e.target.value; },
+          onBlur: function () { saveDB(db); }
+        });
+        var qtyInput = el("input", {
+          type: "number", min: "0", placeholder: "Qty", value: r.qty,
+          onInput: function (e) { r.qty = Math.max(0, Math.floor(Number(e.target.value) || 0)); },
+          onBlur: function () { saveDB(db); }
+        });
+        var locSelect = el("select", {
+          onChange: function (e) {
+            r.locationId = e.target.value;
+            saveDB(db);
+          }
+        }, db.locations.map(function (l) {
+          var opt = el("option", { value: l.id }, [l.code + (l.label ? " — " + l.label : "")]);
+          if (l.id === r.locationId) opt.selected = true;
+          return opt;
+        }));
+
+        var removeBtn = el("button", {
+          class: "icon-btn",
+          onClick: function () {
+            db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
+            saveDB(db);
+            ui.modal = editItemModal(item);
+            render();
+          }
+        }, ["🗑"]);
+
+        rowsWrap.appendChild(el("div", { class: "row" }, [
+          sizeInput, qtyInput, locSelect,
+          el("div", { class: "row-bottom" }, [removeBtn])
+        ]));
+      });
+
+      if (itemRows.length === 0) {
+        rowsWrap.appendChild(el("p", { class: "lock-sub", style: "margin:0 0 12px;" }, ["No sizes/locations for this product yet."]));
+      }
+
+      var addRowBtn = el("button", {
+        class: "btn btn-ghost btn-sm",
+        onClick: function () {
+          if (db.locations.length === 0) {
+            ui.modal = addLocationModal(function (newLoc) {
+              db.stock.push({ id: uid(), itemId: item.id, locationId: newLoc.id, size: "", qty: 0 });
+              saveDB(db);
+              ui.modal = editItemModal(item);
+              render();
+            });
+            render();
+            return;
+          }
+          db.stock.push({ id: uid(), itemId: item.id, locationId: db.locations[0].id, size: "", qty: 0 });
+          saveDB(db);
+          ui.modal = editItemModal(item);
+          render();
+        }
+      }, ["+ Add size / location"]);
+
       var saveBtn = el("button", {
         class: "btn btn-primary",
         id: "save-edit-btn",
@@ -599,6 +699,9 @@
           el("label", { class: "field" }, [el("span", {}, ["Category (optional)"]), catInput])
         ]),
         el("label", { class: "field" }, [el("span", {}, ["Product name"]), nameInput]),
+        el("div", { class: "field" }, [el("span", {}, ["Sizes & locations"])]),
+        rowsWrap,
+        addRowBtn,
         el("div", { class: "modal-actions" }, [
           saveBtn,
           el("button", { class: "btn btn-ghost", onClick: closeModal }, ["Cancel"])
@@ -607,6 +710,98 @@
     }
 
     return modalShell("Edit product", body());
+  }
+
+  function manageLocationsModal(initialAddingNew) {
+    var addingNew = !!initialAddingNew;
+    var newCode = "", newLabel = "";
+
+    function body() {
+      var listWrap = el("div", {});
+
+      db.locations
+        .slice()
+        .sort(function (a, b) { return a.code < b.code ? -1 : a.code > b.code ? 1 : 0; })
+        .forEach(function (loc) {
+          var codeInput = el("input", {
+            value: loc.code,
+            onInput: function (e) { loc.code = e.target.value.toUpperCase(); e.target.value = loc.code; },
+            onBlur: function () { if (loc.code.trim()) saveDB(db); }
+          });
+          var labelInput = el("input", {
+            value: loc.label || "",
+            placeholder: "Description (optional)",
+            onInput: function (e) { loc.label = e.target.value; },
+            onBlur: function () { saveDB(db); }
+          });
+          var deleteBtn = el("button", {
+            class: "icon-btn",
+            onClick: function () {
+              var inUse = db.stock.some(function (s) { return s.locationId === loc.id; });
+              if (inUse && !window.confirm("This location has stock assigned to it. Delete anyway? Stock entries at this location will be removed too.")) return;
+              db.locations = db.locations.filter(function (l) { return l.id !== loc.id; });
+              db.stock = db.stock.filter(function (s) { return s.locationId !== loc.id; });
+              saveDB(db);
+              ui.modal = manageLocationsModal();
+              render();
+            }
+          }, ["🗑"]);
+
+          listWrap.appendChild(el("div", { class: "loc-row" }, [
+            codeInput, labelInput, deleteBtn
+          ]));
+        });
+
+      if (db.locations.length === 0) {
+        listWrap.appendChild(el("p", { class: "lock-sub", style: "margin:0 0 14px;" }, ["No locations yet — add one below."]));
+      }
+
+      var children = [listWrap];
+
+      if (addingNew) {
+        var newCodeInput = el("input", {
+          placeholder: "e.g. A1-03",
+          value: newCode,
+          onInput: function (e) { newCode = e.target.value.toUpperCase(); e.target.value = newCode; }
+        });
+        var newLabelInput = el("input", {
+          placeholder: "e.g. Warehouse A, Rack 1, Shelf 3",
+          value: newLabel,
+          onInput: function (e) { newLabel = e.target.value; }
+        });
+        var confirmAddBtn = el("button", {
+          class: "btn btn-primary btn-sm",
+          onClick: function () {
+            if (!newCode.trim()) return;
+            db.locations.push({ id: uid(), code: newCode.trim(), label: newLabel.trim() });
+            saveDB(db);
+            ui.modal = manageLocationsModal();
+            render();
+          }
+        }, ["Add"]);
+        children.push(el("div", { class: "loc-add-form" }, [
+          el("label", { class: "field" }, [el("span", {}, ["New location code"]), newCodeInput]),
+          el("label", { class: "field" }, [el("span", {}, ["Description (optional)"]), newLabelInput]),
+          confirmAddBtn
+        ]));
+      } else {
+        children.push(el("button", {
+          class: "btn btn-ghost btn-sm",
+          onClick: function () {
+            ui.modal = manageLocationsModal(true);
+            render();
+          }
+        }, ["+ Add new location"]));
+      }
+
+      children.push(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Done"])
+      ]));
+
+      return children;
+    }
+
+    return modalShell("Manage locations", body());
   }
 
   function addLocationModal(onCreated) {
