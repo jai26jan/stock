@@ -413,15 +413,30 @@
     var sku = "", name = "", category = "";
     var rows = [{ id: uid(), size: "", locationId: "", qty: "" }];
 
+    function computeCanSave() {
+      return !!(name.trim() && rows.some(function (r) { return r.size.trim() && r.locationId && r.qty !== "" && Number(r.qty) >= 0; }));
+    }
+
+    function refreshButton() {
+      var btn = document.getElementById("save-product-btn");
+      if (btn) btn.disabled = !computeCanSave();
+    }
+
     function body() {
       var skuInput = el("input", { placeholder: "TSH-001", value: sku, onInput: function (e) { sku = e.target.value; } });
       var catInput = el("input", { placeholder: "T-Shirts", value: category, onInput: function (e) { category = e.target.value; } });
-      var nameInput = el("input", { placeholder: "Classic Crew Tee", value: name, onInput: function (e) { name = e.target.value; } });
+      var nameInput = el("input", { placeholder: "Classic Crew Tee", value: name, onInput: function (e) { name = e.target.value; refreshButton(); } });
 
       var rowsWrap = el("div", {});
       rows.forEach(function (r, idx) {
-        var sizeInput = el("input", { placeholder: "Size (e.g. M)", value: r.size, onInput: function (e) { r.size = e.target.value; } });
-        var qtyInput = el("input", { type: "number", min: "0", placeholder: "Qty", value: r.qty, onInput: function (e) { r.qty = e.target.value; } });
+        var sizeInput = el("input", {
+          placeholder: "Size (e.g. M)", value: r.size,
+          onInput: function (e) { r.size = e.target.value; refreshButton(); }
+        });
+        var qtyInput = el("input", {
+          type: "number", min: "0", placeholder: "Qty", value: r.qty,
+          onInput: function (e) { r.qty = e.target.value; refreshButton(); }
+        });
         var locSelect = el("select", {
           onChange: function (e) {
             if (e.target.value === "__new__") {
@@ -434,6 +449,7 @@
               return;
             }
             r.locationId = e.target.value;
+            refreshButton();
           }
         }, [el("option", { value: "" }, ["Select location…"])].concat(
           db.locations.map(function (l) {
@@ -468,9 +484,10 @@
         }
       }, ["+ Add another size / location"]);
 
-      var canSave = name.trim() && rows.some(function (r) { return r.size.trim() && r.locationId && r.qty !== "" && Number(r.qty) >= 0; });
+      var canSave = computeCanSave();
       var saveBtn = el("button", {
         class: "btn btn-primary",
+        id: "save-product-btn",
         onClick: function () {
           if (!canSave) return;
           var item = { id: uid(), sku: sku.trim(), name: name.trim(), category: category.trim(), createdAt: Date.now() };
