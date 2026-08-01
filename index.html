@@ -53,7 +53,7 @@
 
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
-  .card-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 12px;
+  .card-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 12px; padding-right: 34px;
                border-bottom: 1px dashed #E4E0D3; margin-bottom: 12px; flex-wrap: wrap; }
   .card-eyebrow { font-size: 10.5px; color: var(--slate); text-transform: uppercase; }
   .card-title { font-size: 17px; margin: 2px 0 0; font-weight: 700; }
@@ -78,6 +78,16 @@
   .pill { font-size: 10.5px; font-weight: 600; padding: 3px 7px; border-radius: 20px; background: #EAF2EC; color: var(--green); }
   .pill-low { background: #FCEEDC; color: var(--amber-deep); }
   .pill-out { background: #F8E4E0; color: var(--red); }
+
+  .qty-stepper { display: inline-flex; align-items: center; gap: 2px; background: #EAF2EC; border-radius: 20px; padding: 2px; }
+  .qty-stepper.qty-low { background: #FCEEDC; }
+  .qty-stepper.qty-out { background: #F8E4E0; }
+  .stepper-btn { width: 22px; height: 22px; border-radius: 50%; background: #fff; font-weight: 700; font-size: 14px;
+                 display: flex; align-items: center; justify-content: center; padding: 0; color: var(--ink); line-height: 1; }
+  .stepper-btn:disabled { opacity: .35; }
+  .stepper-input { width: 34px; text-align: center; border: none; background: transparent; font-size: 12px; font-weight: 700;
+                    color: inherit; outline: none; -moz-appearance: textfield; padding: 0; }
+  .stepper-input::-webkit-outer-spin-button, .stepper-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
   .icon-btn { background: transparent; border: none; cursor: pointer; color: var(--slate);
               display: inline-flex; align-items: center; justify-content: center; padding: 6px; border-radius: 6px; font-size: 15px; }
@@ -109,6 +119,14 @@
 
   .modal-actions { display: flex; flex-direction: column-reverse; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #EEEAE0; }
   .modal-actions .btn { width: 100%; justify-content: center; }
+
+  .lock-screen { max-width: 320px; margin: 15vh auto 0; padding: 24px; text-align: center; }
+  .lock-screen h2 { margin: 0 0 6px; font-size: 19px; }
+  .lock-sub { font-size: 13px; color: var(--slate); line-height: 1.5; margin: 0 0 18px; }
+  .lock-input { width: 100%; text-align: center; font-size: 26px; letter-spacing: 10px; padding: 14px;
+                border: 1px solid #DAD6C9; border-radius: 10px; margin-bottom: 14px; outline: none; }
+  .lock-input:focus { border-color: var(--amber-deep); }
+  .lock-error { color: var(--red); font-size: 12.5px; margin: -6px 0 12px; }
 </style>
 </head>
 <body>
@@ -119,8 +137,76 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "stockmap_db_v1";
-  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  var PIN_KEY = "stockmap_pin_v1";
+  var unlocked = sessionStorage.getItem("stockmap_unlocked") === "1";
+
+  function getSavedPin() {
+    try { return localStorage.getItem(PIN_KEY) || ""; } catch (e) { return ""; }
+  }
+  function setSavedPin(pin) {
+    try { localStorage.setItem(PIN_KEY, pin); } catch (e) {}
+  }
+
+  function renderLock() {
+    var root = document.getElementById("app");
+    root.innerHTML = "";
+    var hasPin = !!getSavedPin();
+    var val = "";
+    var errorMsg = "";
+
+    function body() {
+      var wrap = el("div", { class: "lock-screen" }, [
+        el("div", { class: "brand-mark", style: "margin:0 auto 16px;width:48px;height:48px;font-size:20px;" }, ["S"]),
+        el("h2", {}, [hasPin ? "Enter PIN" : "Set a PIN"]),
+        el("p", { class: "lock-sub" }, [
+          hasPin
+            ? "Enter the PIN to unlock this inventory."
+            : "Choose a PIN to protect this inventory. You'll need it each time you open the app."
+        ]),
+        el("input", {
+          class: "lock-input",
+          type: "tel", inputmode: "numeric", placeholder: "••••",
+          value: val,
+          onInput: function (e) { val = e.target.value.replace(/[^0-9]/g, ""); e.target.value = val; },
+          id: "pin-input"
+        }),
+        errorMsg ? el("p", { class: "lock-error" }, [errorMsg]) : null,
+        el("button", {
+          class: "btn btn-primary btn-full",
+          onClick: function () {
+            if (!val.trim()) return;
+            if (hasPin) {
+              if (val === getSavedPin()) {
+                sessionStorage.setItem("stockmap_unlocked", "1");
+                render();
+              } else {
+                errorMsg = "Incorrect PIN. Try again.";
+                renderInner();
+              }
+            } else {
+              if (val.length < 4) {
+                errorMsg = "Use at least 4 digits.";
+                renderInner();
+                return;
+              }
+              setSavedPin(val);
+              sessionStorage.setItem("stockmap_unlocked", "1");
+              render();
+            }
+          }
+        }, [hasPin ? "Unlock" : "Set PIN & continue"])
+      ]);
+      return wrap;
+    }
+
+    function renderInner() {
+      root.innerHTML = "";
+      root.appendChild(body());
+    }
+    renderInner();
+  }
+
+
 
   function loadDB() {
     try {
@@ -210,6 +296,14 @@
         ])
       ]),
       el("div", { class: "topbar-actions" }, [
+        el("button", {
+          class: "btn btn-ghost",
+          onClick: function () {
+            sessionStorage.removeItem("stockmap_unlocked");
+            unlocked = false;
+            renderLock();
+          }
+        }, ["🔒"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = addLocationModal(); render(); } }, ["📍"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
@@ -293,14 +387,42 @@
     return el("span", { class: cls }, [prefix + qty + " " + (qty === 1 ? "unit" : "units")]);
   }
 
-  function itemCard(item, rows, locMap) {
-    var bySize = {};
-    rows.forEach(function (r) {
-      if (!bySize[r.size]) bySize[r.size] = [];
-      bySize[r.size].push(r);
-    });
-    var sizeKeys = Object.keys(bySize).sort();
+  function updateQty(row, newQty) {
+    newQty = Math.max(0, Math.floor(Number(newQty) || 0));
+    row.qty = newQty;
+    saveDB(db);
+    render();
+  }
 
+  function qtyStepper(row) {
+    var minusBtn = el("button", {
+      class: "icon-btn tiny stepper-btn",
+      onClick: function () { updateQty(row, row.qty - 1); }
+    }, ["−"]);
+    if (row.qty <= 0) minusBtn.disabled = true;
+
+    var qtyInput = el("input", {
+      class: "stepper-input",
+      type: "number", min: "0", value: row.qty,
+      onInput: function (e) {
+        row.qty = Math.max(0, Math.floor(Number(e.target.value) || 0));
+      },
+      onBlur: function (e) { updateQty(row, e.target.value); },
+      onClick: function (e) { e.stopPropagation(); }
+    });
+
+    var plusBtn = el("button", {
+      class: "icon-btn tiny stepper-btn",
+      onClick: function () { updateQty(row, row.qty + 1); }
+    }, ["+"]);
+
+    var wrap = el("div", { class: "qty-stepper" + (row.qty === 0 ? " qty-out" : row.qty <= 3 ? " qty-low" : "") }, [
+      minusBtn, qtyInput, plusBtn
+    ]);
+    return wrap;
+  }
+
+  function itemCard(item, rows, locMap) {
     var card = el("div", { class: "card" }, [
       el("button", {
         class: "icon-btn card-delete",
@@ -323,32 +445,47 @@
       ])
     ]);
 
-    sizeKeys.forEach(function (size) {
-      var tagRow = el("div", { class: "bintag-row" });
-      bySize[size].forEach(function (r) {
-        var loc = locMap[r.locationId];
-        tagRow.appendChild(el("div", { class: "bintag-wrap" }, [
-          el("div", { class: "bintag" }, [
-            el("div", { class: "bintag-notch" }),
-            el("div", { class: "bintag-code" }, [loc ? loc.code : "?"]),
-            loc && loc.label ? el("div", { class: "bintag-label" }, [loc.label]) : null
-          ]),
-          el("div", { class: "bintag-meta" }, [
-            stockPill(r.qty),
-            el("button", {
-              class: "icon-btn tiny",
-              onClick: function () {
-                db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
-                saveDB(db);
-                render();
-              }
-            }, ["✕"])
-          ])
-        ]));
-      });
+    var byLocation = {};
+    rows.forEach(function (r) {
+      if (!byLocation[r.locationId]) byLocation[r.locationId] = [];
+      byLocation[r.locationId].push(r);
+    });
+    var locKeys = Object.keys(byLocation).sort(function (a, b) {
+      var la = locMap[a], lb = locMap[b];
+      var ca = la ? la.code : "";
+      var cb = lb ? lb.code : "";
+      return ca < cb ? -1 : ca > cb ? 1 : 0;
+    });
+
+    locKeys.forEach(function (locId) {
+      var loc = locMap[locId];
+      var sizeRow = el("div", { class: "bintag-row" });
+      byLocation[locId]
+        .slice()
+        .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
+        .forEach(function (r) {
+          sizeRow.appendChild(el("div", { class: "bintag-wrap" }, [
+            el("div", { class: "size-badge" }, [r.size]),
+            el("div", { class: "bintag-meta" }, [
+              qtyStepper(r),
+              el("button", {
+                class: "icon-btn tiny",
+                onClick: function () {
+                  db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
+                  saveDB(db);
+                  render();
+                }
+              }, ["✕"])
+            ])
+          ]));
+        });
       card.appendChild(el("div", { class: "size-group" }, [
-        el("div", { class: "size-badge" }, [size]),
-        tagRow
+        el("div", { class: "bintag" }, [
+          el("div", { class: "bintag-notch" }),
+          el("div", { class: "bintag-code" }, [loc ? loc.code : "?"]),
+          loc && loc.label ? el("div", { class: "bintag-label" }, [loc.label]) : null
+        ]),
+        sizeRow
       ]));
     });
 
@@ -520,7 +657,11 @@
     return modalShell("Add a product", body());
   }
 
-  render();
+  if (!unlocked) {
+    renderLock();
+  } else {
+    render();
+  }
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", function () {
