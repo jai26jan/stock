@@ -36,6 +36,7 @@
   .btn-primary { background: var(--amber); color: var(--ink); }
   .btn-ghost { background: transparent; color: var(--paper); border-color: rgba(242,240,234,.3); }
   .modal-actions .btn-ghost { color: var(--ink); border-color: #D8D4C8; }
+  .modal-actions .btn-danger { color: var(--red); border-color: #E8C9C3; }
   .btn-sm { padding: 6px 10px; font-size: 12px; }
   .btn-full { width: 100%; justify-content: center; }
 
@@ -823,7 +824,20 @@
       });
 
       wrap.appendChild(el("div", { class: "modal-actions" }, [
-        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"]),
+        el("button", {
+          class: "btn btn-ghost btn-danger",
+          onClick: function () {
+            var confirmed = window.confirm(
+              "Reset all sold data? This will permanently clear every sold total for every product. This cannot be undone."
+            );
+            if (!confirmed) return;
+            db.sold = [];
+            saveDB(db);
+            ui.modal = soldModal();
+            render();
+          }
+        }, ["Reset all sold data"])
       ]));
 
       return [wrap];
