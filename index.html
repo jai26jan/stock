@@ -116,6 +116,9 @@
   .activity-badge-sold { background: #FCEEDC; color: var(--amber-deep); }
   .activity-entry-text { flex: 1; color: var(--ink); }
   .activity-entry-qty { font-weight: 700; color: var(--slate); font-size: 12px; }
+  .activity-qty-input { width: 48px; text-align: center; border: 1px solid #DAD6C9; border-radius: 6px;
+                         padding: 4px 6px; font-size: 12.5px; font-weight: 700; color: var(--ink); outline: none; }
+  .activity-qty-input:focus { border-color: var(--amber-deep); }
 
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
@@ -496,7 +499,13 @@
   function updateQty(row, newQty) {
     newQty = Math.max(0, Math.floor(Number(newQty) || 0));
     var diff = row.qty - newQty;
-    if (diff > 0) recordSale(row, diff);
+    if (diff > 0) {
+      recordSale(row, diff);
+    } else if (diff < 0) {
+      var restockAmount = -diff;
+      var itemForLog = db.items.find(function (i) { return i.id === row.itemId; });
+      logActivity("added", row.itemId, itemForLog ? itemForLog.name : "Unknown", row.size, restockAmount);
+    }
     row.qty = newQty;
     saveDB(db);
     render();
@@ -1052,6 +1061,23 @@
 
       var dateKeys = Object.keys(byDate).sort().reverse();
 
+      function activityQtyInput(entry) {
+        return el("input", {
+          class: "activity-qty-input",
+          type: "number", min: "0",
+          value: entry.qty,
+          onInput: function (e) { entry.qty = e.target.value; },
+          onBlur: function (e) {
+            var v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+            entry.qty = v;
+            saveDB(db);
+            ui.modal = activityModal();
+            render();
+          },
+          onClick: function (e) { e.stopPropagation(); }
+        });
+      }
+
       var wrap = el("div", {});
       dateKeys.forEach(function (dateKey) {
         var dayData = byDate[dateKey];
@@ -1077,7 +1103,7 @@
             addedList.appendChild(el("div", { class: "activity-entry" }, [
               el("span", { class: "activity-badge activity-badge-added" }, ["+ Added"]),
               el("span", { class: "activity-entry-text" }, [a.itemName + " — " + a.size]),
-              el("span", { class: "activity-entry-qty" }, [String(a.qty)])
+              activityQtyInput(a)
             ]));
           });
           dayBlock.appendChild(addedList);
@@ -1089,7 +1115,7 @@
             soldList.appendChild(el("div", { class: "activity-entry" }, [
               el("span", { class: "activity-badge activity-badge-sold" }, ["− Sold"]),
               el("span", { class: "activity-entry-text" }, [a.itemName + " — " + a.size]),
-              el("span", { class: "activity-entry-qty" }, [String(a.qty)])
+              activityQtyInput(a)
             ]));
           });
           dayBlock.appendChild(soldList);
@@ -1099,7 +1125,20 @@
       });
 
       wrap.appendChild(el("div", { class: "modal-actions" }, [
-        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"]),
+        el("button", {
+          class: "btn btn-ghost btn-danger",
+          onClick: function () {
+            var confirmed = window.confirm(
+              "Reset all activity history? This will permanently clear every logged added and sold entry. This cannot be undone."
+            );
+            if (!confirmed) return;
+            db.activity = [];
+            saveDB(db);
+            ui.modal = activityModal();
+            render();
+          }
+        }, ["Reset all activity"])
       ]));
 
       return [wrap];
