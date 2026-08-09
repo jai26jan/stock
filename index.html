@@ -67,6 +67,12 @@
                border-radius: 20px; padding: 4px 6px 4px 10px; font-size: 11.5px; }
   .sold-chip-size { font-weight: 700; color: var(--ink); }
 
+  .sold-line { padding: 10px 0; border-bottom: 1px solid #F0EDE3; }
+  .sold-line:last-child { border-bottom: none; }
+  .sold-line-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .sold-line-price { flex-direction: row; align-items: center; gap: 8px; }
+  .sold-line-price span:first-child { min-width: 62px; }
+
   .sold-total-banner { display: flex; flex-direction: column; align-items: center; background: #F4F2EC;
                         border-radius: 10px; padding: 16px; margin-bottom: 18px; }
   .sold-total-num { font-size: 26px; font-weight: 700; color: var(--amber-deep); }
@@ -276,6 +282,7 @@
       if (raw) {
         var parsed = JSON.parse(raw);
         if (!parsed.sold) parsed.sold = [];
+        parsed.sold.forEach(function (s) { if (s.sellPrice === undefined) s.sellPrice = ""; });
         if (!parsed.items) parsed.items = [];
         if (!parsed.locations) parsed.locations = [];
         if (!parsed.stock) parsed.stock = [];
@@ -480,7 +487,7 @@
     if (existing) {
       existing.qty += amount;
     } else {
-      db.sold.push({ id: uid(), itemId: row.itemId, size: row.size, qty: amount });
+      db.sold.push({ id: uid(), itemId: row.itemId, size: row.size, qty: amount, sellPrice: "" });
     }
     var itemForLog = db.items.find(function (i) { return i.id === row.itemId; });
     logActivity("sold", row.itemId, itemForLog ? itemForLog.name : "Unknown", row.size, amount);
@@ -838,7 +845,7 @@
   function ensurePrice(itemId, size) {
     var existing = getPrice(itemId, size);
     if (existing) return existing;
-    var created = { id: uid(), itemId: itemId, size: size, cost: "", sell: "" };
+    var created = { id: uid(), itemId: itemId, size: size, cost: "" };
     db.prices.push(created);
     return created;
   }
@@ -905,12 +912,8 @@
               el("div", { class: "price-row-size" }, [size]),
               el("div", { class: "price-row-fields" }, [
                 el("label", { class: "price-field" }, [
-                  el("span", {}, ["Cost"]),
+                  el("span", {}, ["Avg. cost price"]),
                   priceStepperInput(priceEntry, "cost")
-                ]),
-                el("label", { class: "price-field" }, [
-                  el("span", {}, ["Sell"]),
-                  priceStepperInput(priceEntry, "sell")
                 ])
               ])
             ]));
@@ -938,7 +941,7 @@
         if (!item) return;
         var price = getPrice(s.itemId, s.size);
         var cost = price && price.cost !== "" ? Number(price.cost) : null;
-        var sell = price && price.sell !== "" ? Number(price.sell) : null;
+        var sell = s.sellPrice !== "" && s.sellPrice !== undefined ? Number(s.sellPrice) : null;
         var hasPricing = cost !== null && sell !== null;
         var profit = hasPricing ? (sell - cost) * s.qty : null;
         rows.push({ item: item, size: s.size, qty: s.qty, cost: cost, sell: sell, profit: profit, hasPricing: hasPricing });
@@ -969,7 +972,7 @@
 
       if (missingPricing) {
         wrap.appendChild(el("p", { class: "lock-sub", style: "margin:0 0 14px;" }, [
-          "Some sold items don't have cost/sell prices set yet — set them in 💲 Prices to include them here."
+          "Some sold items are missing a cost price (💲 Prices) or sell price (🧾 Sold) — set both to include them here."
         ]));
       }
 
@@ -1137,17 +1140,34 @@
         var block = el("div", { class: "sold-block" }, [
           el("div", { class: "sold-block-title" }, [item.name + (item.sku ? " · " + item.sku : "")])
         ]);
-        var row = el("div", { class: "sold-row" });
         entries
           .slice()
           .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
           .forEach(function (s) {
-            row.appendChild(el("div", { class: "sold-chip" }, [
-              el("span", { class: "sold-chip-size" }, [s.size]),
-              soldStepper(s)
+            var sellInput = el("input", {
+              class: "price-input",
+              type: "number", min: "0", step: "0.01",
+              placeholder: "Sell price",
+              value: s.sellPrice,
+              onInput: function (e) { s.sellPrice = e.target.value; },
+              onBlur: function (e) {
+                var v = e.target.value;
+                s.sellPrice = v === "" ? "" : Math.max(0, Number(v) || 0);
+                saveDB(db);
+                e.target.value = s.sellPrice;
+              }
+            });
+            block.appendChild(el("div", { class: "sold-line" }, [
+              el("div", { class: "sold-line-top" }, [
+                el("span", { class: "sold-chip-size" }, [s.size]),
+                soldStepper(s)
+              ]),
+              el("label", { class: "price-field sold-line-price" }, [
+                el("span", {}, ["Sell price"]),
+                sellInput
+              ])
             ]));
           });
-        block.appendChild(row);
         wrap.appendChild(block);
       });
 
