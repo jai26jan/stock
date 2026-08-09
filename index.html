@@ -98,6 +98,19 @@
   .pl-negative { color: var(--red); }
   .profit-row-missing { color: var(--amber-deep); font-style: italic; }
 
+  .activity-day { margin-bottom: 18px; }
+  .activity-day-header { display: flex; justify-content: space-between; align-items: baseline;
+                          margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid var(--ink); }
+  .activity-day-label { font-size: 14px; font-weight: 800; color: var(--ink); }
+  .activity-day-summary { font-size: 11px; color: var(--slate); }
+  .activity-list { margin-bottom: 6px; }
+  .activity-entry { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12.5px; }
+  .activity-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px; white-space: nowrap; }
+  .activity-badge-added { background: #EAF2EC; color: var(--green); }
+  .activity-badge-sold { background: #FCEEDC; color: var(--amber-deep); }
+  .activity-entry-text { flex: 1; color: var(--ink); }
+  .activity-entry-qty { font-weight: 700; color: var(--slate); font-size: 12px; }
+
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
   .loc-row input:first-child { font-weight: 700; text-transform: uppercase; }
@@ -267,10 +280,11 @@
         if (!parsed.locations) parsed.locations = [];
         if (!parsed.stock) parsed.stock = [];
         if (!parsed.prices) parsed.prices = [];
+        if (!parsed.activity) parsed.activity = [];
         return parsed;
       }
     } catch (e) {}
-    return { items: [], locations: [], stock: [], sold: [], prices: [] };
+    return { items: [], locations: [], stock: [], sold: [], prices: [], activity: [] };
   }
   function saveDB(db) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
@@ -365,6 +379,7 @@
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = soldModal(); render(); } }, ["🧾"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = profitModal(); render(); } }, ["📊"]),
+        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
     ]);
@@ -447,6 +462,18 @@
     return el("span", { class: cls }, [prefix + qty + " " + (qty === 1 ? "unit" : "units")]);
   }
 
+  function logActivity(type, itemId, itemName, size, qty) {
+    db.activity.push({
+      id: uid(),
+      type: type, // "added" or "sold"
+      itemId: itemId,
+      itemName: itemName,
+      size: size,
+      qty: qty,
+      ts: Date.now()
+    });
+  }
+
   function recordSale(row, amount) {
     if (amount <= 0) return;
     var existing = db.sold.find(function (s) { return s.itemId === row.itemId && s.size === row.size; });
@@ -455,6 +482,8 @@
     } else {
       db.sold.push({ id: uid(), itemId: row.itemId, size: row.size, qty: amount });
     }
+    var itemForLog = db.items.find(function (i) { return i.id === row.itemId; });
+    logActivity("sold", row.itemId, itemForLog ? itemForLog.name : "Unknown", row.size, amount);
   }
 
   function updateQty(row, newQty) {
@@ -664,6 +693,7 @@
           db.items.push(newItem);
           sourceRows.forEach(function (r) {
             db.stock.push({ id: uid(), itemId: newItem.id, locationId: r.locationId, size: r.size, qty: r.qty });
+            logActivity("added", newItem.id, newItem.name, r.size, r.qty);
           });
           saveDB(db);
           closeModal();
@@ -974,6 +1004,105 @@
     }
 
     return modalShell("Profit & Loss", body());
+  }
+
+  function formatDateKey(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  function formatDateLabel(dateKey) {
+    var parts = dateKey.split("-").map(Number);
+    var d = new Date(parts[0], parts[1] - 1, parts[2]);
+    var today = new Date();
+    var todayKey = formatDateKey(today.getTime());
+    var yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    var yesterdayKey = formatDateKey(yesterday.getTime());
+    if (dateKey === todayKey) return "Today";
+    if (dateKey === yesterdayKey) return "Yesterday";
+    var months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return months[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
+  }
+
+  function activityModal() {
+    function body() {
+      if (db.activity.length === 0) {
+        return [
+          el("div", { class: "empty-state", style: "padding:30px 10px;" }, [
+            el("div", {}, ["📅"]),
+            el("h2", {}, ["No activity yet"]),
+            el("p", {}, ["Every product you add and every sale you record will show up here, grouped by date."])
+          ]),
+          el("div", { class: "modal-actions" }, [
+            el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+          ])
+        ];
+      }
+
+      var byDate = {};
+      db.activity.forEach(function (a) {
+        var key = formatDateKey(a.ts);
+        if (!byDate[key]) byDate[key] = { added: [], sold: [] };
+        byDate[key][a.type].push(a);
+      });
+
+      var dateKeys = Object.keys(byDate).sort().reverse();
+
+      var wrap = el("div", {});
+      dateKeys.forEach(function (dateKey) {
+        var dayData = byDate[dateKey];
+        var addedTotal = dayData.added.reduce(function (s, a) { return s + a.qty; }, 0);
+        var soldTotal = dayData.sold.reduce(function (s, a) { return s + a.qty; }, 0);
+
+        var dayBlock = el("div", { class: "activity-day" }, [
+          el("div", { class: "activity-day-header" }, [
+            el("span", { class: "activity-day-label" }, [formatDateLabel(dateKey)]),
+            el("span", { class: "activity-day-summary" }, [
+              [
+                (addedTotal > 0 ? addedTotal + " added" : ""),
+                (addedTotal > 0 && soldTotal > 0 ? " · " : ""),
+                (soldTotal > 0 ? soldTotal + " sold" : "")
+              ].join("")
+            ])
+          ])
+        ]);
+
+        if (dayData.added.length > 0) {
+          var addedList = el("div", { class: "activity-list" });
+          dayData.added.forEach(function (a) {
+            addedList.appendChild(el("div", { class: "activity-entry" }, [
+              el("span", { class: "activity-badge activity-badge-added" }, ["+ Added"]),
+              el("span", { class: "activity-entry-text" }, [a.itemName + " — " + a.size]),
+              el("span", { class: "activity-entry-qty" }, [String(a.qty)])
+            ]));
+          });
+          dayBlock.appendChild(addedList);
+        }
+
+        if (dayData.sold.length > 0) {
+          var soldList = el("div", { class: "activity-list" });
+          dayData.sold.forEach(function (a) {
+            soldList.appendChild(el("div", { class: "activity-entry" }, [
+              el("span", { class: "activity-badge activity-badge-sold" }, ["− Sold"]),
+              el("span", { class: "activity-entry-text" }, [a.itemName + " — " + a.size]),
+              el("span", { class: "activity-entry-qty" }, [String(a.qty)])
+            ]));
+          });
+          dayBlock.appendChild(soldList);
+        }
+
+        wrap.appendChild(dayBlock);
+      });
+
+      wrap.appendChild(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+      ]));
+
+      return [wrap];
+    }
+
+    return modalShell("Activity", body());
   }
 
   function soldModal() {
@@ -1293,6 +1422,7 @@
           rows.forEach(function (r) {
             if (!r.size.trim() || !r.locationId || r.qty === "") return;
             db.stock.push({ id: uid(), itemId: item.id, locationId: r.locationId, size: r.size.trim(), qty: Number(r.qty) });
+            logActivity("added", item.id, item.name, r.size.trim(), Number(r.qty));
           });
           saveDB(db);
           closeModal();
