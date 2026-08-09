@@ -69,7 +69,9 @@
 
   .sold-line { padding: 10px 0; border-bottom: 1px solid #F0EDE3; }
   .sold-line:last-child { border-bottom: none; }
-  .sold-line-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .sold-line-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .sold-line-meta { display: flex; flex-direction: column; gap: 1px; }
+  .sold-line-time { font-size: 10px; color: var(--slate); }
   .sold-line-price { flex-direction: row; align-items: center; gap: 8px; }
   .sold-line-price span:first-child { min-width: 62px; }
 
@@ -285,11 +287,22 @@
       if (raw) {
         var parsed = JSON.parse(raw);
         if (!parsed.sold) parsed.sold = [];
-        parsed.sold.forEach(function (s) { if (s.sellPrice === undefined) s.sellPrice = ""; });
+        parsed.sold.forEach(function (s) { if (s.sellPrice === undefined) s.sellPrice = ""; if (!s.ts) s.ts = 0; });
         if (!parsed.items) parsed.items = [];
         if (!parsed.locations) parsed.locations = [];
         if (!parsed.stock) parsed.stock = [];
         if (!parsed.prices) parsed.prices = [];
+        (function migratePrices() {
+          var hasOldShape = parsed.prices.some(function (p) { return p.size !== undefined; });
+          if (!hasOldShape) return;
+          var collapsed = {};
+          parsed.prices.forEach(function (p) {
+            if (!collapsed[p.itemId] || (collapsed[p.itemId].cost === "" && p.cost !== "")) {
+              collapsed[p.itemId] = { id: p.id, itemId: p.itemId, cost: p.cost };
+            }
+          });
+          parsed.prices = Object.keys(collapsed).map(function (k) { return collapsed[k]; });
+        })();
         if (!parsed.activity) parsed.activity = [];
         return parsed;
       }
@@ -486,12 +499,7 @@
 
   function recordSale(row, amount) {
     if (amount <= 0) return;
-    var existing = db.sold.find(function (s) { return s.itemId === row.itemId && s.size === row.size; });
-    if (existing) {
-      existing.qty += amount;
-    } else {
-      db.sold.push({ id: uid(), itemId: row.itemId, size: row.size, qty: amount, sellPrice: "" });
-    }
+    db.sold.push({ id: uid(), itemId: row.itemId, size: row.size, qty: amount, sellPrice: "", ts: Date.now() });
     var itemForLog = db.items.find(function (i) { return i.id === row.itemId; });
     logActivity("sold", row.itemId, itemForLog ? itemForLog.name : "Unknown", row.size, amount);
   }
@@ -847,14 +855,14 @@
     return modalShell("Edit product", body());
   }
 
-  function getPrice(itemId, size) {
-    return db.prices.find(function (p) { return p.itemId === itemId && p.size === size; });
+  function getPrice(itemId) {
+    return db.prices.find(function (p) { return p.itemId === itemId; });
   }
 
-  function ensurePrice(itemId, size) {
-    var existing = getPrice(itemId, size);
+  function ensurePrice(itemId) {
+    var existing = getPrice(itemId);
     if (existing) return existing;
-    var created = { id: uid(), itemId: itemId, size: size, cost: "" };
+    var created = { id: uid(), itemId: itemId, cost: "" };
     db.prices.push(created);
     return created;
   }
@@ -877,22 +885,16 @@
 
   function priceModal() {
     function body() {
-      // Auto-collect every distinct product+size combo currently in stock
-      var combos = [];
-      var seen = {};
-      db.stock.forEach(function (s) {
-        var key = s.itemId + "::" + s.size;
-        if (seen[key]) return;
-        seen[key] = true;
-        combos.push({ itemId: s.itemId, size: s.size });
-      });
+      var itemIdsWithStock = {};
+      db.stock.forEach(function (s) { itemIdsWithStock[s.itemId] = true; });
+      var itemsWithStock = db.items.filter(function (item) { return itemIdsWithStock[item.id]; });
 
-      if (combos.length === 0) {
+      if (itemsWithStock.length === 0) {
         return [
           el("div", { class: "empty-state", style: "padding:30px 10px;" }, [
             el("div", {}, ["💲"]),
             el("h2", {}, ["No products yet"]),
-            el("p", {}, ["Add a product with sizes first — prices can be set here once sizes exist."])
+            el("p", {}, ["Add a product first — its cost price can be set here once it exists."])
           ]),
           el("div", { class: "modal-actions" }, [
             el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
@@ -900,34 +902,18 @@
         ];
       }
 
-      var byItem = {};
-      combos.forEach(function (c) {
-        if (!byItem[c.itemId]) byItem[c.itemId] = [];
-        byItem[c.itemId].push(c.size);
-      });
-
       var wrap = el("div", {});
-      db.items.forEach(function (item) {
-        if (!byItem[item.id]) return;
-        var block = el("div", { class: "sold-block" }, [
-          el("div", { class: "sold-block-title" }, [item.name + (item.sku ? " · " + item.sku : "")])
-        ]);
-        byItem[item.id]
-          .slice()
-          .sort(function (a, b) { return a < b ? -1 : a > b ? 1 : 0; })
-          .forEach(function (size) {
-            var priceEntry = ensurePrice(item.id, size);
-            block.appendChild(el("div", { class: "price-row" }, [
-              el("div", { class: "price-row-size" }, [size]),
-              el("div", { class: "price-row-fields" }, [
-                el("label", { class: "price-field" }, [
-                  el("span", {}, ["Avg. cost price"]),
-                  priceStepperInput(priceEntry, "cost")
-                ])
-              ])
-            ]));
-          });
-        wrap.appendChild(block);
+      itemsWithStock.forEach(function (item) {
+        var priceEntry = ensurePrice(item.id);
+        wrap.appendChild(el("div", { class: "price-row" }, [
+          el("div", { class: "price-row-size" }, [item.name + (item.sku ? " · " + item.sku : "")]),
+          el("div", { class: "price-row-fields" }, [
+            el("label", { class: "price-field" }, [
+              el("span", {}, ["Avg. cost price"]),
+              priceStepperInput(priceEntry, "cost")
+            ])
+          ])
+        ]));
       });
       saveDB(db);
 
@@ -948,7 +934,7 @@
         if (s.qty <= 0) return;
         var item = db.items.find(function (i) { return i.id === s.itemId; });
         if (!item) return;
-        var price = getPrice(s.itemId, s.size);
+        var price = getPrice(s.itemId);
         var cost = price && price.cost !== "" ? Number(price.cost) : null;
         var sell = s.sellPrice !== "" && s.sellPrice !== undefined ? Number(s.sellPrice) : null;
         var hasPricing = cost !== null && sell !== null;
@@ -1181,7 +1167,10 @@
         ]);
         entries
           .slice()
-          .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
+          .sort(function (a, b) {
+            if (a.size !== b.size) return a.size < b.size ? -1 : 1;
+            return (a.ts || 0) - (b.ts || 0);
+          })
           .forEach(function (s) {
             var sellInput = el("input", {
               class: "price-input",
@@ -1196,10 +1185,24 @@
                 e.target.value = s.sellPrice;
               }
             });
+            var timeLabel = s.ts ? new Date(s.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+            var deleteBtn = el("button", {
+              class: "icon-btn tiny",
+              onClick: function () {
+                db.sold = db.sold.filter(function (x) { return x.id !== s.id; });
+                saveDB(db);
+                ui.modal = soldModal();
+                render();
+              }
+            }, ["✕"]);
             block.appendChild(el("div", { class: "sold-line" }, [
               el("div", { class: "sold-line-top" }, [
-                el("span", { class: "sold-chip-size" }, [s.size]),
-                soldStepper(s)
+                el("div", { class: "sold-line-meta" }, [
+                  el("span", { class: "sold-chip-size" }, [s.size]),
+                  timeLabel ? el("span", { class: "sold-line-time" }, [timeLabel]) : null
+                ]),
+                soldStepper(s),
+                deleteBtn
               ]),
               el("label", { class: "price-field sold-line-price" }, [
                 el("span", {}, ["Sell price"]),
