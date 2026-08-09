@@ -37,6 +37,7 @@
   .btn-ghost { background: transparent; color: var(--paper); border-color: rgba(242,240,234,.3); }
   .modal-actions .btn-ghost { color: var(--ink); border-color: #D8D4C8; }
   .modal-actions .btn-danger { color: var(--red); border-color: #E8C9C3; }
+  .modal-actions .btn-danger-solid { background: var(--red); color: #fff; }
   .btn-sm { padding: 6px 10px; font-size: 12px; }
   .btn-full { width: 100%; justify-content: center; }
 
@@ -121,6 +122,13 @@
   .activity-qty-input { width: 48px; text-align: center; border: 1px solid #DAD6C9; border-radius: 6px;
                          padding: 4px 6px; font-size: 12.5px; font-weight: 700; color: var(--ink); outline: none; }
   .activity-qty-input:focus { border-color: var(--amber-deep); }
+
+  .trash-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+               padding: 12px 0; border-bottom: 1px solid #F0EDE3; }
+  .trash-row:last-child { border-bottom: none; }
+  .trash-row-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .trash-row-meta { font-size: 11px; color: var(--slate); margin-top: 2px; }
+  .trash-row-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
@@ -304,10 +312,11 @@
           parsed.prices = Object.keys(collapsed).map(function (k) { return collapsed[k]; });
         })();
         if (!parsed.activity) parsed.activity = [];
+        if (!parsed.trash) parsed.trash = [];
         return parsed;
       }
     } catch (e) {}
-    return { items: [], locations: [], stock: [], sold: [], prices: [], activity: [] };
+    return { items: [], locations: [], stock: [], sold: [], prices: [], activity: [], trash: [] };
   }
   function saveDB(db) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
@@ -403,6 +412,7 @@
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = profitModal(); render(); } }, ["📊"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
+        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = trashModal(); render(); } }, ["🗑️"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
     ]);
@@ -495,6 +505,24 @@
       qty: qty,
       ts: Date.now()
     });
+  }
+
+  function moveToTrash(item) {
+    var itemStock = db.stock.filter(function (s) { return s.itemId === item.id; });
+    db.trash.push({
+      id: uid(),
+      deletedAt: Date.now(),
+      item: item,
+      stock: itemStock
+    });
+    db.items = db.items.filter(function (i) { return i.id !== item.id; });
+    db.stock = db.stock.filter(function (s) { return s.itemId !== item.id; });
+  }
+
+  function restoreFromTrash(trashEntry) {
+    db.items.push(trashEntry.item);
+    trashEntry.stock.forEach(function (s) { db.stock.push(s); });
+    db.trash = db.trash.filter(function (t) { return t.id !== trashEntry.id; });
   }
 
   function recordSale(row, amount) {
@@ -594,11 +622,11 @@
         el("button", {
           class: "icon-btn",
           onClick: function () {
-            db.items = db.items.filter(function (i) { return i.id !== item.id; });
-            db.stock = db.stock.filter(function (s) { return s.itemId !== item.id; });
-            db.sold = db.sold.filter(function (s) { return s.itemId !== item.id; });
-            saveDB(db);
-            render();
+            confirmWithPin("Enter your PIN to delete \"" + item.name + "\". It'll be moved to Recently Deleted and can be restored later.", function () {
+              moveToTrash(item);
+              saveDB(db);
+              closeModal();
+            });
           }
         }, ["🗑"])
       ]),
@@ -640,9 +668,11 @@
               el("button", {
                 class: "icon-btn tiny",
                 onClick: function () {
-                  db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
-                  saveDB(db);
-                  render();
+                  confirmWithPin("Enter your PIN to remove this size/location entry.", function () {
+                    db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
+                    saveDB(db);
+                    closeModal();
+                  });
                 }
               }, ["✕"])
             ])
@@ -664,6 +694,47 @@
   // ---------- Modals ----------
 
   function closeModal() { ui.modal = null; render(); }
+
+  function confirmWithPin(message, onConfirm) {
+    var previousModal = ui.modal;
+    var val = "";
+    var errorMsg = "";
+
+    function body() {
+      var input = el("input", {
+        class: "lock-input",
+        type: "tel", inputmode: "numeric", placeholder: "••••",
+        value: val,
+        onInput: function (e) { val = e.target.value.replace(/[^0-9]/g, ""); e.target.value = val; }
+      });
+      var confirmBtn = el("button", {
+        class: "btn btn-danger-solid btn-full",
+        onClick: function () {
+          if (val === getSavedPin()) {
+            onConfirm();
+          } else {
+            errorMsg = "Incorrect PIN.";
+            ui.modal = modalShell("Confirm PIN", body());
+            render();
+          }
+        }
+      }, ["Confirm"]);
+      var cancelBtn = el("button", {
+        class: "btn btn-ghost btn-full",
+        onClick: function () { ui.modal = previousModal; render(); }
+      }, ["Cancel"]);
+
+      return [
+        el("p", { class: "lock-sub", style: "margin-top:0;" }, [message]),
+        input,
+        errorMsg ? el("p", { class: "lock-error" }, [errorMsg]) : null,
+        el("div", { class: "modal-actions" }, [confirmBtn, cancelBtn])
+      ];
+    }
+
+    ui.modal = modalShell("Confirm PIN", body());
+    render();
+  }
 
   function modalShell(title, bodyChildren) {
     return function () {
@@ -785,10 +856,12 @@
         var removeBtn = el("button", {
           class: "icon-btn",
           onClick: function () {
-            db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
-            saveDB(db);
-            ui.modal = editItemModal(item);
-            render();
+            confirmWithPin("Enter your PIN to remove this size/location entry.", function () {
+              db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
+              saveDB(db);
+              ui.modal = editItemModal(item);
+              render();
+            });
           }
         }, ["🗑"]);
 
@@ -1023,6 +1096,71 @@
     return months[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
   }
 
+  function trashModal() {
+    function body() {
+      if (db.trash.length === 0) {
+        return [
+          el("div", { class: "empty-state", style: "padding:30px 10px;" }, [
+            el("div", {}, ["🗑️"]),
+            el("h2", {}, ["Nothing deleted"]),
+            el("p", {}, ["Deleted products land here first, so you can restore them if it was a mistake."])
+          ]),
+          el("div", { class: "modal-actions" }, [
+            el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+          ])
+        ];
+      }
+
+      var wrap = el("div", {});
+      db.trash
+        .slice()
+        .sort(function (a, b) { return b.deletedAt - a.deletedAt; })
+        .forEach(function (t) {
+          var totalQty = t.stock.reduce(function (s, r) { return s + r.qty; }, 0);
+          var when = new Date(t.deletedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+          var sizesText = t.stock.map(function (s) { return s.size; }).join(", ") || "no sizes";
+
+          var restoreBtn = el("button", {
+            class: "btn btn-primary btn-sm",
+            onClick: function () {
+              restoreFromTrash(t);
+              saveDB(db);
+              ui.modal = trashModal();
+              render();
+            }
+          }, ["Restore"]);
+
+          var deleteForeverBtn = el("button", {
+            class: "icon-btn",
+            onClick: function () {
+              confirmWithPin("Enter your PIN to permanently delete \"" + t.item.name + "\". This cannot be undone.", function () {
+                db.trash = db.trash.filter(function (x) { return x.id !== t.id; });
+                saveDB(db);
+                ui.modal = trashModal();
+                render();
+              });
+            }
+          }, ["🗑"]);
+
+          wrap.appendChild(el("div", { class: "trash-row" }, [
+            el("div", { class: "trash-row-info" }, [
+              el("div", { class: "trash-row-name" }, [t.item.name + (t.item.sku ? " · " + t.item.sku : "")]),
+              el("div", { class: "trash-row-meta" }, [sizesText + " · " + totalQty + " units · deleted " + when])
+            ]),
+            el("div", { class: "trash-row-actions" }, [restoreBtn, deleteForeverBtn])
+          ]));
+        });
+
+      wrap.appendChild(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+      ]));
+
+      return [wrap];
+    }
+
+    return modalShell("Recently Deleted", body());
+  }
+
   function activityModal() {
     function body() {
       if (db.activity.length === 0) {
@@ -1115,14 +1253,15 @@
         el("button", {
           class: "btn btn-ghost btn-danger",
           onClick: function () {
-            var confirmed = window.confirm(
-              "Reset all activity history? This will permanently clear every logged added and sold entry. This cannot be undone."
+            confirmWithPin(
+              "This will permanently clear every logged added and sold entry. Enter your PIN to confirm.",
+              function () {
+                db.activity = [];
+                saveDB(db);
+                ui.modal = activityModal();
+                render();
+              }
             );
-            if (!confirmed) return;
-            db.activity = [];
-            saveDB(db);
-            ui.modal = activityModal();
-            render();
           }
         }, ["Reset all activity"])
       ]));
@@ -1189,10 +1328,12 @@
             var deleteBtn = el("button", {
               class: "icon-btn tiny",
               onClick: function () {
-                db.sold = db.sold.filter(function (x) { return x.id !== s.id; });
-                saveDB(db);
-                ui.modal = soldModal();
-                render();
+                confirmWithPin("Enter your PIN to delete this sold entry.", function () {
+                  db.sold = db.sold.filter(function (x) { return x.id !== s.id; });
+                  saveDB(db);
+                  ui.modal = soldModal();
+                  render();
+                });
               }
             }, ["✕"]);
             block.appendChild(el("div", { class: "sold-line" }, [
@@ -1218,14 +1359,15 @@
         el("button", {
           class: "btn btn-ghost btn-danger",
           onClick: function () {
-            var confirmed = window.confirm(
-              "Reset all sold data? This will permanently clear every sold total for every product. This cannot be undone."
+            confirmWithPin(
+              "This will permanently clear every sold total for every product. Enter your PIN to confirm.",
+              function () {
+                db.sold = [];
+                saveDB(db);
+                ui.modal = soldModal();
+                render();
+              }
             );
-            if (!confirmed) return;
-            db.sold = [];
-            saveDB(db);
-            ui.modal = soldModal();
-            render();
           }
         }, ["Reset all sold data"])
       ]));
@@ -1262,12 +1404,16 @@
             class: "icon-btn",
             onClick: function () {
               var inUse = db.stock.some(function (s) { return s.locationId === loc.id; });
-              if (inUse && !window.confirm("This location has stock assigned to it. Delete anyway? Stock entries at this location will be removed too.")) return;
-              db.locations = db.locations.filter(function (l) { return l.id !== loc.id; });
-              db.stock = db.stock.filter(function (s) { return s.locationId !== loc.id; });
-              saveDB(db);
-              ui.modal = manageLocationsModal();
-              render();
+              var msg = inUse
+                ? "This location has stock assigned to it. Enter your PIN to delete it anyway — stock entries here will be removed too."
+                : "Enter your PIN to delete this location.";
+              confirmWithPin(msg, function () {
+                db.locations = db.locations.filter(function (l) { return l.id !== loc.id; });
+                db.stock = db.stock.filter(function (s) { return s.locationId !== loc.id; });
+                saveDB(db);
+                ui.modal = manageLocationsModal();
+                render();
+              });
             }
           }, ["🗑"]);
 
