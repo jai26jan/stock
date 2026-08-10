@@ -936,11 +936,21 @@
   }
 
   function csvEscape(val) {
+    if (val && typeof val === "object" && val.__csvRaw !== undefined) {
+      return val.__csvRaw;
+    }
     var s = val === null || val === undefined ? "" : String(val);
     if (/[",\n]/.test(s)) {
       s = '"' + s.replace(/"/g, '""') + '"';
     }
     return s;
+  }
+
+  // Forces Excel to treat a value as literal text instead of auto-converting
+  // patterns like "3-4" or "0-1" into dates.
+  function csvForceText(val) {
+    var s = val === null || val === undefined ? "" : String(val);
+    return { __csvRaw: '="' + s.replace(/"/g, '""') + '"' };
   }
 
   function rowsToCsv(headers, rows) {
@@ -980,7 +990,7 @@
       } else {
         itemStock.forEach(function (s) {
           var loc = locById[s.locationId];
-          rows.push([item.name, item.sku || "", item.category || "", s.size, loc ? loc.code : "", loc ? loc.label : "", s.qty]);
+          rows.push([item.name, item.sku || "", item.category || "", csvForceText(s.size), loc ? loc.code : "", loc ? loc.label : "", s.qty]);
         });
       }
     });
@@ -1003,7 +1013,7 @@
     var rows = db.sold.map(function (s) {
       var item = itemById[s.itemId];
       var dateStr = s.ts ? new Date(s.ts).toLocaleString() : "";
-      return [item ? item.name : "Unknown", item ? item.sku || "" : "", s.size, s.qty, s.sellPrice !== "" ? s.sellPrice : "", dateStr];
+      return [item ? item.name : "Unknown", item ? item.sku || "" : "", csvForceText(s.size), s.qty, s.sellPrice !== "" ? s.sellPrice : "", dateStr];
     });
     downloadCsv("stockmap-sold-" + dateStamp() + ".csv", rowsToCsv(headers, rows));
   }
@@ -1022,7 +1032,7 @@
       var sell = s.sellPrice !== "" && s.sellPrice !== undefined ? Number(s.sellPrice) : null;
       var profit = (cost !== null && sell !== null) ? (sell - cost) * s.qty : "";
       rows.push([
-        item.name, item.sku || "", s.size, s.qty,
+        item.name, item.sku || "", csvForceText(s.size), s.qty,
         cost !== null ? cost : "",
         sell !== null ? sell : "",
         profit
