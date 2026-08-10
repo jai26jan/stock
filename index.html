@@ -130,6 +130,12 @@
   .trash-row-meta { font-size: 11px; color: var(--slate); margin-top: 2px; }
   .trash-row-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
+  .export-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                padding: 12px 0; border-bottom: 1px solid #F0EDE3; }
+  .export-row:last-of-type { border-bottom: none; }
+  .export-row-label { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .export-row-desc { font-size: 11px; color: var(--slate); margin-top: 2px; }
+
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
   .loc-row input:first-child { font-weight: 700; text-transform: uppercase; }
@@ -412,6 +418,7 @@
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = profitModal(); render(); } }, ["📊"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
+        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = exportModal(); render(); } }, ["⬇️"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = trashModal(); render(); } }, ["🗑️"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
@@ -926,6 +933,129 @@
     }
 
     return modalShell("Edit product", body());
+  }
+
+  function csvEscape(val) {
+    var s = val === null || val === undefined ? "" : String(val);
+    if (/[",\n]/.test(s)) {
+      s = '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function rowsToCsv(headers, rows) {
+    var lines = [headers.map(csvEscape).join(",")];
+    rows.forEach(function (r) {
+      lines.push(r.map(csvEscape).join(","));
+    });
+    return lines.join("\r\n");
+  }
+
+  function downloadCsv(filename, csvText) {
+    var blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function dateStamp() {
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  function exportProductsCsv() {
+    var locById = {};
+    db.locations.forEach(function (l) { locById[l.id] = l; });
+    var headers = ["Product Name", "SKU", "Category", "Size", "Location Code", "Location Label", "Quantity"];
+    var rows = [];
+    db.items.forEach(function (item) {
+      var itemStock = db.stock.filter(function (s) { return s.itemId === item.id; });
+      if (itemStock.length === 0) {
+        rows.push([item.name, item.sku || "", item.category || "", "", "", "", ""]);
+      } else {
+        itemStock.forEach(function (s) {
+          var loc = locById[s.locationId];
+          rows.push([item.name, item.sku || "", item.category || "", s.size, loc ? loc.code : "", loc ? loc.label : "", s.qty]);
+        });
+      }
+    });
+    downloadCsv("stockmap-products-" + dateStamp() + ".csv", rowsToCsv(headers, rows));
+  }
+
+  function exportPricesCsv() {
+    var headers = ["Product Name", "SKU", "Avg. Cost Price"];
+    var rows = db.items.map(function (item) {
+      var price = getPrice(item.id);
+      return [item.name, item.sku || "", price && price.cost !== "" ? price.cost : ""];
+    });
+    downloadCsv("stockmap-prices-" + dateStamp() + ".csv", rowsToCsv(headers, rows));
+  }
+
+  function exportSoldCsv() {
+    var itemById = {};
+    db.items.forEach(function (i) { itemById[i.id] = i; });
+    var headers = ["Product Name", "SKU", "Size", "Quantity Sold", "Sell Price", "Date"];
+    var rows = db.sold.map(function (s) {
+      var item = itemById[s.itemId];
+      var dateStr = s.ts ? new Date(s.ts).toLocaleString() : "";
+      return [item ? item.name : "Unknown", item ? item.sku || "" : "", s.size, s.qty, s.sellPrice !== "" ? s.sellPrice : "", dateStr];
+    });
+    downloadCsv("stockmap-sold-" + dateStamp() + ".csv", rowsToCsv(headers, rows));
+  }
+
+  function exportProfitCsv() {
+    var itemById = {};
+    db.items.forEach(function (i) { itemById[i.id] = i; });
+    var headers = ["Product Name", "SKU", "Size", "Quantity Sold", "Cost Price", "Sell Price", "Profit/Loss"];
+    var rows = [];
+    db.sold.forEach(function (s) {
+      if (s.qty <= 0) return;
+      var item = itemById[s.itemId];
+      if (!item) return;
+      var price = getPrice(s.itemId);
+      var cost = price && price.cost !== "" ? Number(price.cost) : null;
+      var sell = s.sellPrice !== "" && s.sellPrice !== undefined ? Number(s.sellPrice) : null;
+      var profit = (cost !== null && sell !== null) ? (sell - cost) * s.qty : "";
+      rows.push([
+        item.name, item.sku || "", s.size, s.qty,
+        cost !== null ? cost : "",
+        sell !== null ? sell : "",
+        profit
+      ]);
+    });
+    downloadCsv("stockmap-profit-loss-" + dateStamp() + ".csv", rowsToCsv(headers, rows));
+  }
+
+  function exportModal() {
+    function body() {
+      function exportRow(label, description, fn) {
+        return el("div", { class: "export-row" }, [
+          el("div", { class: "export-row-info" }, [
+            el("div", { class: "export-row-label" }, [label]),
+            el("div", { class: "export-row-desc" }, [description])
+          ]),
+          el("button", { class: "btn btn-primary btn-sm", onClick: fn }, ["Download"])
+        ]);
+      }
+
+      return [
+        el("p", { class: "lock-sub", style: "margin-top:0;" }, ["Choose what you'd like to download as a CSV file (opens directly in Excel)."]),
+        exportRow("Products", db.items.length + " products, with sizes, locations & quantities", exportProductsCsv),
+        exportRow("Prices", db.items.length + " products with average cost price", exportPricesCsv),
+        exportRow("Sold", db.sold.length + " sold entries with sell price & date", exportSoldCsv),
+        exportRow("Profit & Loss", "Per-sale profit/loss breakdown", exportProfitCsv),
+        el("div", { class: "modal-actions" }, [
+          el("button", { class: "btn btn-ghost", onClick: closeModal }, ["Close"])
+        ])
+      ];
+    }
+
+    return modalShell("Export data", body());
   }
 
   function getPrice(itemId) {
