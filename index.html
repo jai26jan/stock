@@ -27,6 +27,10 @@
                 display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; flex-shrink: 0; }
   .brand-title { font-weight: 700; letter-spacing: .06em; font-size: 15px; }
   .brand-sub { font-size: 10.5px; color: #9AA5B5; }
+  .sync-indicator { font-size: 10.5px; cursor: default; }
+  .sync-idle { color: #7FBF8E; }
+  .sync-syncing { color: #E8A33D; }
+  .sync-error, .sync-offline { color: #E8867A; cursor: pointer; text-decoration: underline; }
   .topbar-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
   button { font-family: inherit; }
@@ -218,6 +222,45 @@
 (function () {
   "use strict";
 
+  // ---------------------------------------------------------------------
+  // Supabase config
+  // ---------------------------------------------------------------------
+  var SUPABASE_URL = "https://ywmvcmogvkimwhmngtzh.supabase.co";
+  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3bXZjbW9ndmtpbXdobW5ndHpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MjA3OTcsImV4cCI6MjEwMTk5Njc5N30.3h1Dh4ya0mDKhfcGEuM1rj-y63LCl8evBdMsEPdfBBU";
+
+  var syncStatus = "idle"; // idle | syncing | error | offline
+  var syncErrorMsg = "";
+
+  function sbHeaders(extra) {
+    var h = {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    };
+    if (extra) for (var k in extra) h[k] = extra[k];
+    return h;
+  }
+
+  // Generic REST call to a Supabase table.
+  // method: GET/POST/PATCH/DELETE, path e.g. "items?select=*" or "items?id=eq.123"
+  function sbRequest(table, method, query, body, extraHeaders) {
+    var url = SUPABASE_URL + "/rest/v1/" + table + (query ? "?" + query : "");
+    return fetch(url, {
+      method: method,
+      headers: sbHeaders(extraHeaders),
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          throw new Error("Supabase " + method + " " + table + " failed (" + res.status + "): " + t);
+        });
+      }
+      var ct = res.headers.get("content-type") || "";
+      if (ct.indexOf("application/json") !== -1) return res.json();
+      return null;
+    });
+  }
+
   var STORAGE_KEY = "stockmap_db_v1";
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -265,7 +308,9 @@
             if (hasPin) {
               if (val === getSavedPin()) {
                 sessionStorage.setItem("stockmap_unlocked", "1");
+                unlocked = true;
                 render();
+                initialSync();
               } else {
                 errorMsg = "Incorrect PIN. Try again.";
                 renderInner();
@@ -278,7 +323,9 @@
               }
               setSavedPin(val);
               sessionStorage.setItem("stockmap_unlocked", "1");
+              unlocked = true;
               render();
+              initialSync();
             }
           }
         }, [hasPin ? "Unlock" : "Set PIN & continue"])
@@ -326,6 +373,161 @@
   }
   function saveDB(db) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
+    queueSync();
+  }
+
+  // ---------------------------------------------------------------------
+  // Sync engine: local-first. Every saveDB() schedules a debounced push
+  // of the full current state to Supabase. A pull happens on load and
+  // periodically, merging remote data in (remote wins on conflict, since
+  // this is a small-team tool and simplicity beats perfect CRDT merging).
+  // ---------------------------------------------------------------------
+  var syncTimer = null;
+  var syncInFlight = false;
+  var syncQueued = false;
+
+  function queueSync() {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(pushToSupabase, 900);
+  }
+
+  function setSyncStatus(status, msg) {
+    syncStatus = status;
+    syncErrorMsg = msg || "";
+    updateSyncIndicator();
+  }
+
+  function updateSyncIndicator() {
+    var el2 = document.getElementById("sync-indicator");
+    if (!el2) return;
+    var label = syncStatus === "syncing" ? "Syncing…"
+      : syncStatus === "error" ? "Sync error — tap to retry"
+      : syncStatus === "offline" ? "Offline — saved locally"
+      : "Synced";
+    el2.textContent = label;
+    el2.className = "sync-indicator sync-" + syncStatus;
+  }
+
+  function tableRows(db) {
+    return {
+      locations: db.locations.map(function (l) { return { id: l.id, code: l.code, label: l.label || "" }; }),
+      items: db.items.map(function (i) { return { id: i.id, sku: i.sku || "", name: i.name, category: i.category || "", created_at: i.createdAt || 0 }; }),
+      stock: db.stock.map(function (s) { return { id: s.id, item_id: s.itemId, location_id: s.locationId, size: s.size, qty: s.qty }; }),
+      sold: db.sold.map(function (s) { return { id: s.id, item_id: s.itemId, size: s.size, qty: s.qty, sell_price: s.sellPrice === "" ? null : s.sellPrice, ts: s.ts || 0 }; }),
+      prices: db.prices.map(function (p) { return { id: p.id, item_id: p.itemId, cost: p.cost === "" ? null : p.cost }; }),
+      activity: db.activity.map(function (a) { return { id: a.id, type: a.type, item_id: a.itemId, item_name: a.itemName, size: a.size, qty: a.qty, ts: a.ts }; }),
+      trash: db.trash.map(function (t) { return { id: t.id, deleted_at: t.deletedAt, item: t.item, stock: t.stock }; })
+    };
+  }
+
+  function pushToSupabase() {
+    if (syncInFlight) { syncQueued = true; return; }
+    syncInFlight = true;
+    setSyncStatus("syncing");
+
+    var tables = tableRows(db);
+    var order = ["locations", "items", "stock", "sold", "prices", "activity", "trash"];
+
+    var chain = Promise.resolve();
+    order.forEach(function (table) {
+      chain = chain.then(function () {
+        var rows = tables[table];
+        if (rows.length === 0) return Promise.resolve();
+        return sbRequest(table, "POST", "on_conflict=id", rows, { "Prefer": "resolution=merge-duplicates" });
+      });
+    });
+
+    chain.then(function () {
+      syncInFlight = false;
+      setSyncStatus("idle");
+      if (syncQueued) { syncQueued = false; queueSync(); }
+    }).catch(function (err) {
+      syncInFlight = false;
+      console.error(err);
+      setSyncStatus("error", err.message);
+    });
+  }
+
+  function fromRemoteRow_item(r) { return { id: r.id, sku: r.sku || "", name: r.name, category: r.category || "", createdAt: r.created_at || 0 }; }
+  function fromRemoteRow_location(r) { return { id: r.id, code: r.code, label: r.label || "" }; }
+  function fromRemoteRow_stock(r) { return { id: r.id, itemId: r.item_id, locationId: r.location_id, size: r.size, qty: r.qty }; }
+  function fromRemoteRow_sold(r) { return { id: r.id, itemId: r.item_id, size: r.size, qty: r.qty, sellPrice: r.sell_price === null ? "" : r.sell_price, ts: r.ts || 0 }; }
+  function fromRemoteRow_price(r) { return { id: r.id, itemId: r.item_id, cost: r.cost === null ? "" : r.cost }; }
+  function fromRemoteRow_activity(r) { return { id: r.id, type: r.type, itemId: r.item_id, itemName: r.item_name, size: r.size, qty: r.qty, ts: r.ts }; }
+  function fromRemoteRow_trash(r) { return { id: r.id, deletedAt: r.deleted_at, item: r.item, stock: r.stock }; }
+
+  function pullFromSupabase() {
+    return Promise.all([
+      sbRequest("locations", "GET", "select=*"),
+      sbRequest("items", "GET", "select=*"),
+      sbRequest("stock", "GET", "select=*"),
+      sbRequest("sold", "GET", "select=*"),
+      sbRequest("prices", "GET", "select=*"),
+      sbRequest("activity", "GET", "select=*"),
+      sbRequest("trash", "GET", "select=*")
+    ]).then(function (results) {
+      var next = {
+        locations: results[0].map(fromRemoteRow_location),
+        items: results[1].map(fromRemoteRow_item),
+        stock: results[2].map(fromRemoteRow_stock),
+        sold: results[3].map(fromRemoteRow_sold),
+        prices: results[4].map(fromRemoteRow_price),
+        activity: results[5].map(fromRemoteRow_activity),
+        trash: results[6].map(fromRemoteRow_trash)
+      };
+      db = next;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
+      setSyncStatus("idle");
+      render();
+    });
+  }
+
+  var MIGRATION_DONE_KEY = "stockmap_migrated_v1";
+
+  function hasAnyLocalData(d) {
+    return d.items.length > 0 || d.locations.length > 0 || d.stock.length > 0 ||
+           d.sold.length > 0 || d.prices.length > 0 || d.activity.length > 0 || d.trash.length > 0;
+  }
+
+  function initialSync() {
+    var alreadyMigrated = localStorage.getItem(MIGRATION_DONE_KEY) === "1";
+
+    if (!alreadyMigrated && hasAnyLocalData(db)) {
+      // First time syncing this device, and there's existing phone data.
+      // Check if Supabase already has data (e.g. another device set this up first).
+      // If Supabase is empty, this phone's data is the "source of truth" — push it up
+      // instead of pulling empty tables and wiping it.
+      setSyncStatus("syncing");
+      sbRequest("items", "GET", "select=id&limit=1").then(function (remoteItems) {
+        if (remoteItems.length === 0) {
+          // Supabase is empty — push local data up to seed it.
+          pushToSupabase();
+          localStorage.setItem(MIGRATION_DONE_KEY, "1");
+          setSyncStatus("idle");
+        } else {
+          // Supabase already has data from elsewhere — pull it in as normal.
+          localStorage.setItem(MIGRATION_DONE_KEY, "1");
+          pullFromSupabase().catch(function (err) {
+            console.error(err);
+            setSyncStatus(navigator.onLine ? "error" : "offline", err.message);
+            render();
+          });
+        }
+      }).catch(function (err) {
+        console.error(err);
+        setSyncStatus(navigator.onLine ? "error" : "offline", err.message);
+      });
+      return;
+    }
+
+    localStorage.setItem(MIGRATION_DONE_KEY, "1");
+    setSyncStatus("syncing");
+    pullFromSupabase().catch(function (err) {
+      console.error(err);
+      // If pull fails (e.g. offline on first load), fall back to local data silently.
+      setSyncStatus(navigator.onLine ? "error" : "offline", err.message);
+      render();
+    });
   }
 
   var db = loadDB();
@@ -401,7 +603,16 @@
         el("div", { class: "brand-mark" }, ["S"]),
         el("div", {}, [
           el("div", { class: "brand-title" }, ["STOCKMAP"]),
-          el("div", { class: "brand-sub" }, ["size & location tracker"])
+          el("div", {
+            id: "sync-indicator",
+            class: "sync-indicator sync-" + syncStatus,
+            onClick: function () { if (syncStatus === "error" || syncStatus === "offline") pushToSupabase(); }
+          }, [
+            syncStatus === "syncing" ? "Syncing…"
+              : syncStatus === "error" ? "Sync error — tap to retry"
+              : syncStatus === "offline" ? "Offline — saved locally"
+              : "Synced"
+          ])
         ])
       ]),
       el("div", { class: "topbar-actions" }, [
@@ -1800,7 +2011,19 @@
     renderLock();
   } else {
     render();
+    initialSync();
   }
+
+  // Pull remote changes periodically so other devices' edits show up here too.
+  // Skipped while a modal is open, so it never clobbers an in-progress edit.
+  setInterval(function () {
+    if (unlocked && !syncInFlight && !ui.modal) {
+      pullFromSupabase().catch(function (err) {
+        console.error(err);
+        setSyncStatus(navigator.onLine ? "error" : "offline", err.message);
+      });
+    }
+  }, 20000);
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", function () {
