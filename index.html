@@ -143,6 +143,22 @@
   .account-info { background: #F4F2EC; border-radius: 10px; padding: 14px; margin-bottom: 16px; text-align: center; }
   .account-email-label { font-size: 10px; color: var(--slate); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
   .account-email { font-size: 15px; font-weight: 700; color: var(--ink); word-break: break-all; }
+  .admin-badge { display: inline-block; margin-top: 6px; font-size: 9.5px; font-weight: 800; letter-spacing: .04em;
+                 background: var(--ink); color: var(--paper); padding: 3px 8px; border-radius: 20px; }
+
+  .admin-tabs { display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid #EEEAE0; }
+  .admin-tab { flex: 1; background: transparent; border: none; padding: 10px; font-size: 13px; font-weight: 600;
+               color: var(--slate); border-bottom: 2px solid transparent; cursor: pointer; }
+  .admin-tab-active { color: var(--ink); border-bottom-color: var(--amber-deep); }
+
+  .audit-row { padding: 9px 0; border-bottom: 1px solid #F0EDE3; }
+  .audit-row:last-child { border-bottom: none; }
+  .audit-row-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .audit-action { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+  .audit-time { font-size: 10px; color: var(--slate); }
+  .audit-row-bottom { display: flex; justify-content: space-between; gap: 8px; margin-top: 2px; }
+  .audit-email { font-size: 11px; color: var(--amber-deep); }
+  .audit-details { font-size: 10.5px; color: var(--slate); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
@@ -232,37 +248,13 @@
   var SUPABASE_URL = "https://ywmvcmogvkimwhmngtzh.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3bXZjbW9ndmtpbXdobW5ndHpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MjA3OTcsImV4cCI6MjEwMTk5Njc5N30.3h1Dh4ya0mDKhfcGEuM1rj-y63LCl8evBdMsEPdfBBU";
 
-  var AUTH_SESSION_KEY = "stockmap_auth_session_v1";
-
-  function getAuthSession() {
-    try {
-      var raw = localStorage.getItem(AUTH_SESSION_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  }
-  function setAuthSession(session) {
-    try {
-      if (session) localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
-      else localStorage.removeItem(AUTH_SESSION_KEY);
-    } catch (e) {}
-  }
-  function getAuthToken() {
-    var s = getAuthSession();
-    return s && s.access_token ? s.access_token : null;
-  }
-  function getAuthEmail() {
-    var s = getAuthSession();
-    return s && s.user && s.user.email ? s.user.email : "";
-  }
-
   var syncStatus = "idle"; // idle | syncing | error | offline
   var syncErrorMsg = "";
 
   function sbHeaders(extra) {
-    var token = getAuthToken() || SUPABASE_ANON_KEY;
     var h = {
       "apikey": SUPABASE_ANON_KEY,
-      "Authorization": "Bearer " + token,
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
       "Content-Type": "application/json"
     };
     if (extra) for (var k in extra) h[k] = extra[k];
@@ -289,53 +281,30 @@
     });
   }
 
-  // ---------------------------------------------------------------------
-  // Auth: magic link sign-in via Supabase Auth
-  // ---------------------------------------------------------------------
-  function sendMagicLink(email) {
-    return fetch(SUPABASE_URL + "/auth/v1/otp", {
-      method: "POST",
-      headers: { "apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email, create_user: true })
-    }).then(function (res) {
-      if (!res.ok) {
-        return res.text().then(function (t) { throw new Error("Couldn't send link: " + t); });
-      }
-      return true;
+  var ADMIN_DEVICE_KEY = "stockmap_is_admin_device_v1";
+  function isAdminDevice() {
+    try { return localStorage.getItem(ADMIN_DEVICE_KEY) === "1"; } catch (e) { return false; }
+  }
+  function setAdminDevice(isAdmin) {
+    try { localStorage.setItem(ADMIN_DEVICE_KEY, isAdmin ? "1" : "0"); } catch (e) {}
+  }
+
+  // Writes an audit entry both to Supabase (source of truth for the log)
+  // and locally, so the Admin screen can show recent activity even if
+  // the last push hasn't completed yet.
+  function logAudit(action, targetType, targetId, details) {
+    var entry = {
+      id: uid(),
+      ts: Date.now(),
+      email: getDeviceName() || "Unnamed device",
+      action: action,
+      target_type: targetType || null,
+      target_id: targetId || null,
+      details: details || {}
+    };
+    sbRequest("audit_log", "POST", null, [entry]).catch(function (err) {
+      console.error("Audit log write failed", err);
     });
-  }
-
-  // Supabase redirects back with #access_token=...&refresh_token=...&... in the URL hash
-  // after the person taps the magic link in their email.
-  function checkAuthCallback() {
-    var hash = window.location.hash;
-    if (!hash || hash.indexOf("access_token") === -1) return false;
-    var params = new URLSearchParams(hash.slice(1));
-    var accessToken = params.get("access_token");
-    var refreshToken = params.get("refresh_token");
-    if (!accessToken) return false;
-
-    // Fetch the user's profile to store their email alongside the session.
-    fetch(SUPABASE_URL + "/auth/v1/user", {
-      headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + accessToken }
-    }).then(function (res) { return res.json(); })
-      .then(function (user) {
-        setAuthSession({ access_token: accessToken, refresh_token: refreshToken, user: user });
-        history.replaceState(null, "", window.location.pathname + window.location.search);
-        location.reload();
-      })
-      .catch(function () {
-        setAuthSession({ access_token: accessToken, refresh_token: refreshToken, user: null });
-        history.replaceState(null, "", window.location.pathname + window.location.search);
-        location.reload();
-      });
-    return true;
-  }
-
-  function signOut() {
-    setAuthSession(null);
-    sessionStorage.removeItem("stockmap_unlocked");
-    location.reload();
   }
 
   var STORAGE_KEY = "stockmap_db_v1";
@@ -345,6 +314,7 @@
   for (var _s = 0; _s < 15; _s++) { SIZE_PRESETS.push(_s + "-" + (_s + 1)); }
 
   var PIN_KEY = "stockmap_pin_v1";
+  var DEVICE_NAME_KEY = "stockmap_device_name_v1";
   var unlocked = sessionStorage.getItem("stockmap_unlocked") === "1";
 
   function getSavedPin() {
@@ -353,64 +323,46 @@
   function setSavedPin(pin) {
     try { localStorage.setItem(PIN_KEY, pin); } catch (e) {}
   }
+  function getDeviceName() {
+    try { return localStorage.getItem(DEVICE_NAME_KEY) || ""; } catch (e) { return ""; }
+  }
+  function setDeviceName(name) {
+    try { localStorage.setItem(DEVICE_NAME_KEY, name); } catch (e) {}
+  }
 
-  function renderLogin() {
+  function renderDeviceName(onDone) {
     var root = document.getElementById("app");
     root.innerHTML = "";
-    var email = "";
-    var sent = false;
-    var sending = false;
+    var name = "";
     var errorMsg = "";
 
     function body() {
-      var wrap = el("div", { class: "lock-screen" }, [
+      var input = el("input", {
+        class: "lock-input",
+        style: "font-size:16px;letter-spacing:normal;text-align:left;",
+        placeholder: "e.g. Front counter, Priya's phone",
+        value: name,
+        onInput: function (e) { name = e.target.value; }
+      });
+      var btn = el("button", {
+        class: "btn btn-primary btn-full",
+        onClick: function () {
+          if (!name.trim()) { errorMsg = "Enter a name for this device."; renderInner(); return; }
+          setDeviceName(name.trim());
+          onDone();
+        }
+      }, ["Continue"]);
+
+      return el("div", { class: "lock-screen" }, [
         el("div", { class: "brand-mark", style: "margin:0 auto 16px;width:48px;height:48px;font-size:20px;" }, ["S"]),
-        el("h2", {}, [sent ? "Check your email" : "Sign in"]),
+        el("h2", {}, ["Name this device"]),
         el("p", { class: "lock-sub" }, [
-          sent
-            ? "We sent a sign-in link to " + email + ". Open it on this device to continue."
-            : "Enter your email — we'll send you a link to sign in, no password needed."
-        ])
+          "This label shows up in the activity log so you know who did what — e.g. \"Front counter\" or a person's name."
+        ]),
+        input,
+        errorMsg ? el("p", { class: "lock-error" }, [errorMsg]) : null,
+        btn
       ]);
-
-      if (!sent) {
-        var emailInput = el("input", {
-          class: "lock-input",
-          style: "font-size:16px;letter-spacing:normal;text-align:left;",
-          type: "email", placeholder: "you@example.com",
-          value: email,
-          onInput: function (e) { email = e.target.value; }
-        });
-        var sendBtn = el("button", {
-          class: "btn btn-primary btn-full",
-          onClick: function () {
-            if (!email.trim() || sending) return;
-            sending = true;
-            errorMsg = "";
-            renderInner();
-            sendMagicLink(email.trim()).then(function () {
-              sending = false;
-              sent = true;
-              renderInner();
-            }).catch(function (err) {
-              sending = false;
-              errorMsg = "Couldn't send the link. Check the email and try again.";
-              renderInner();
-            });
-          }
-        }, [sending ? "Sending…" : "Send sign-in link"]);
-
-        wrap.appendChild(emailInput);
-        if (errorMsg) wrap.appendChild(el("p", { class: "lock-error" }, [errorMsg]));
-        wrap.appendChild(sendBtn);
-      } else {
-        wrap.appendChild(el("button", {
-          class: "btn btn-ghost btn-full",
-          onClick: function () { sent = false; renderInner(); }
-        }, ["Use a different email"]));
-      }
-
-      return wrap;
     }
 
     function renderInner() {
@@ -426,6 +378,17 @@
     var hasPin = !!getSavedPin();
     var val = "";
     var errorMsg = "";
+
+    function proceedToApp(details) {
+      sessionStorage.setItem("stockmap_unlocked", "1");
+      unlocked = true;
+      logAudit("login", "auth", null, details || {});
+      render();
+      initialSync();
+      refreshAdminStatus().then(function () {
+        if (ui.modal === null) render();
+      });
+    }
 
     function body() {
       var wrap = el("div", { class: "lock-screen" }, [
@@ -450,10 +413,7 @@
             if (!val.trim()) return;
             if (hasPin) {
               if (val === getSavedPin()) {
-                sessionStorage.setItem("stockmap_unlocked", "1");
-                unlocked = true;
-                render();
-                initialSync();
+                proceedToApp({});
               } else {
                 errorMsg = "Incorrect PIN. Try again.";
                 renderInner();
@@ -465,10 +425,22 @@
                 return;
               }
               setSavedPin(val);
-              sessionStorage.setItem("stockmap_unlocked", "1");
-              unlocked = true;
-              render();
-              initialSync();
+              renderDeviceName(function () {
+                // First-ever setup: if no admin devices exist yet in Supabase,
+                // this device becomes the first admin automatically.
+                sbRequest("allowed_users", "GET", "select=email&limit=1").then(function (rows) {
+                  var isFirstEver = rows.length === 0;
+                  if (isFirstEver) {
+                    setAdminDevice(true);
+                    sbRequest("allowed_users", "POST", null, [{
+                      email: getDeviceName(), is_admin: true, added_at: Date.now(), added_by: "system"
+                    }]).catch(function (err) { console.error("Couldn't register first admin device", err); });
+                  }
+                  proceedToApp({ first_pin_setup: true, admin_device: isFirstEver });
+                }).catch(function () {
+                  proceedToApp({ first_pin_setup: true });
+                });
+              });
             }
           }
         }, [hasPin ? "Unlock" : "Set PIN & continue"])
@@ -630,6 +602,16 @@
   function hasAnyLocalData(d) {
     return d.items.length > 0 || d.locations.length > 0 || d.stock.length > 0 ||
            d.sold.length > 0 || d.prices.length > 0 || d.activity.length > 0 || d.trash.length > 0;
+  }
+
+  function refreshAdminStatus() {
+    var myName = getDeviceName();
+    if (!myName) return Promise.resolve();
+    return sbRequest("allowed_users", "GET", "email=eq." + encodeURIComponent(myName) + "&select=is_admin")
+      .then(function (rows) {
+        setAdminDevice(rows.length > 0 && !!rows[0].is_admin);
+      })
+      .catch(function () { /* keep last known value on failure */ });
   }
 
   function initialSync() {
@@ -980,6 +962,7 @@
           class: "icon-btn",
           onClick: function () {
             confirmWithPin("Enter your PIN to delete \"" + item.name + "\". It'll be moved to Recently Deleted and can be restored later.", function () {
+              logAudit("delete_item", "item", item.id, { name: item.name, sku: item.sku || "" });
               moveToTrash(item);
               saveDB(db);
               closeModal();
@@ -1026,6 +1009,7 @@
                 class: "icon-btn tiny",
                 onClick: function () {
                   confirmWithPin("Enter your PIN to remove this size/location entry.", function () {
+                    logAudit("delete_stock", "stock", r.id, { itemId: r.itemId, size: r.size, qty: r.qty });
                     db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
                     saveDB(db);
                     closeModal();
@@ -1143,6 +1127,7 @@
           if (!name.trim()) return;
           var newItem = { id: uid(), sku: sku.trim(), name: name.trim(), category: category.trim(), createdAt: Date.now() };
           db.items.push(newItem);
+          logAudit("add_item", "item", newItem.id, { name: newItem.name, sku: newItem.sku, copied_from: sourceItem.id });
           sourceRows.forEach(function (r) {
             db.stock.push({ id: uid(), itemId: newItem.id, locationId: r.locationId, size: r.size, qty: r.qty });
             logActivity("added", newItem.id, newItem.name, r.size, r.qty);
@@ -1214,6 +1199,7 @@
           class: "icon-btn",
           onClick: function () {
             confirmWithPin("Enter your PIN to remove this size/location entry.", function () {
+              logAudit("delete_stock", "stock", r.id, { itemId: r.itemId, size: r.size, qty: r.qty });
               db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
               saveDB(db);
               ui.modal = editItemModal(item);
@@ -1260,6 +1246,7 @@
           item.sku = sku.trim();
           item.name = name.trim();
           item.category = category.trim();
+          logAudit("edit_item", "item", item.id, { name: item.name, sku: item.sku });
           saveDB(db);
           closeModal();
         }
@@ -1586,14 +1573,206 @@
     return months[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
   }
 
+  function adminModal() {
+    var view = "users"; // "users" | "audit"
+    var allowedUsers = [];
+    var auditEntries = [];
+    var newEmail = "";
+    var loading = true;
+    var loadErr = "";
+
+    function loadData() {
+      loading = true;
+      Promise.all([
+        sbRequest("allowed_users", "GET", "select=*&order=added_at.asc"),
+        sbRequest("audit_log", "GET", "select=*&order=ts.desc&limit=200")
+      ]).then(function (results) {
+        allowedUsers = results[0];
+        auditEntries = results[1];
+        loading = false;
+        ui.modal = adminModal_withState();
+        render();
+      }).catch(function (err) {
+        loading = false;
+        loadErr = err.message;
+        ui.modal = adminModal_withState();
+        render();
+      });
+    }
+
+    function adminModal_withState() {
+      return modalShell("Admin", body());
+    }
+
+    function body() {
+      if (loading) {
+        return [el("p", { class: "lock-sub" }, ["Loading…"])];
+      }
+      if (loadErr) {
+        return [
+          el("p", { class: "lock-error" }, [loadErr]),
+          el("div", { class: "modal-actions" }, [el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])])
+        ];
+      }
+
+      var tabs = el("div", { class: "admin-tabs" }, [
+        el("button", {
+          class: "admin-tab" + (view === "users" ? " admin-tab-active" : ""),
+          onClick: function () { view = "users"; ui.modal = adminModal_withState(); render(); }
+        }, ["Users"]),
+        el("button", {
+          class: "admin-tab" + (view === "audit" ? " admin-tab-active" : ""),
+          onClick: function () { view = "audit"; ui.modal = adminModal_withState(); render(); }
+        }, ["Audit log"])
+      ]);
+
+      var content;
+      if (view === "users") {
+        content = buildUsersView();
+      } else {
+        content = buildAuditView();
+      }
+
+      return [tabs, content];
+    }
+
+    function buildUsersView() {
+      var wrap = el("div", {});
+      var myName = getDeviceName();
+
+      allowedUsers.forEach(function (u) {
+        var isSelf = u.email === myName;
+        var adminToggle = el("button", {
+          class: "btn btn-sm " + (u.is_admin ? "btn-primary" : "btn-ghost"),
+          onClick: function () {
+            if (isSelf) return;
+            var willBeAdmin = !u.is_admin;
+            sbRequest("allowed_users", "PATCH", "email=eq." + encodeURIComponent(u.email), { is_admin: willBeAdmin }, { "Prefer": "return=minimal" })
+              .then(function () {
+                logAudit(willBeAdmin ? "grant_admin" : "revoke_admin", "device", u.email, {});
+                loadData();
+              });
+          }
+        }, [u.is_admin ? "Admin" : "Make admin"]);
+        if (isSelf) adminToggle.disabled = true;
+
+        var removeBtn = el("button", {
+          class: "icon-btn",
+          onClick: function () {
+            if (isSelf) return;
+            confirmWithPin("Enter your PIN to remove \"" + u.email + "\" from the admin list.", function () {
+              sbRequest("allowed_users", "DELETE", "email=eq." + encodeURIComponent(u.email)).then(function () {
+                logAudit("remove_device", "device", u.email, {});
+                loadData();
+              });
+              closeModal();
+            });
+          }
+        }, ["✕"]);
+        if (isSelf) removeBtn.disabled = true;
+
+        wrap.appendChild(el("div", { class: "trash-row" }, [
+          el("div", { class: "trash-row-info" }, [
+            el("div", { class: "trash-row-name" }, [u.email + (isSelf ? " (this device)" : "")]),
+            el("div", { class: "trash-row-meta" }, [u.is_admin ? "Admin" : "Member"])
+          ]),
+          el("div", { class: "trash-row-actions" }, [adminToggle, removeBtn])
+        ]));
+      });
+
+      if (allowedUsers.length === 0) {
+        wrap.appendChild(el("p", { class: "lock-sub" }, ["No devices registered yet."]));
+      }
+
+      var nameInput = el("input", {
+        placeholder: "Device name, e.g. Back office",
+        value: newEmail,
+        onInput: function (e) { newEmail = e.target.value; }
+      });
+      var addBtn = el("button", {
+        class: "btn btn-primary btn-sm",
+        onClick: function () {
+          var em = newEmail.trim();
+          if (!em) return;
+          sbRequest("allowed_users", "POST", null, [{ email: em, is_admin: false, added_at: Date.now(), added_by: myName }])
+            .then(function () {
+              logAudit("add_device", "device", em, {});
+              newEmail = "";
+              loadData();
+            })
+            .catch(function (err) {
+              loadErr = "Couldn't add that email: " + err.message;
+              ui.modal = adminModal_withState();
+              render();
+            });
+        }
+      }, ["Add"]);
+
+      wrap.appendChild(el("div", { class: "loc-add-form" }, [
+        el("label", { class: "field" }, [el("span", {}, ["Add a new user"]), emailInput]),
+        addBtn
+      ]));
+
+      wrap.appendChild(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+      ]));
+
+      return wrap;
+    }
+
+    function buildAuditView() {
+      var wrap = el("div", {});
+      if (auditEntries.length === 0) {
+        wrap.appendChild(el("p", { class: "lock-sub" }, ["No audit entries yet."]));
+      }
+      auditEntries.forEach(function (a) {
+        var when = a.ts ? new Date(a.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+        var detailsText = a.details && Object.keys(a.details).length > 0
+          ? Object.keys(a.details).map(function (k) { return k + ": " + a.details[k]; }).join(", ")
+          : "";
+        wrap.appendChild(el("div", { class: "audit-row" }, [
+          el("div", { class: "audit-row-top" }, [
+            el("span", { class: "audit-action" }, [a.action]),
+            el("span", { class: "audit-time" }, [when])
+          ]),
+          el("div", { class: "audit-row-bottom" }, [
+            el("span", { class: "audit-email" }, [a.email || "unknown"]),
+            detailsText ? el("span", { class: "audit-details" }, [detailsText]) : null
+          ])
+        ]));
+      });
+
+      wrap.appendChild(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+      ]));
+
+      return wrap;
+    }
+
+    loadData();
+    return modalShell("Admin", [el("p", { class: "lock-sub" }, ["Loading…"])]);
+  }
+
   function accountModal() {
     function body() {
-      var email = getAuthEmail() || "Signed in";
-      return [
+      var deviceName = getDeviceName() || "This device";
+      var children = [
         el("div", { class: "account-info" }, [
-          el("div", { class: "account-email-label" }, ["Signed in as"]),
-          el("div", { class: "account-email" }, [email])
-        ]),
+          el("div", { class: "account-email-label" }, ["This device"]),
+          el("div", { class: "account-email" }, [deviceName]),
+          isAdminDevice() ? el("div", { class: "admin-badge" }, ["ADMIN"]) : null
+        ])
+      ];
+
+      if (isAdminDevice()) {
+        children.push(el("button", {
+          class: "btn btn-ghost btn-full",
+          style: "margin-bottom:8px;",
+          onClick: function () { ui.modal = adminModal(); render(); }
+        }, ["⚙️ Admin: manage devices & audit log"]));
+      }
+
+      children.push(
         el("button", {
           class: "btn btn-ghost btn-full",
           onClick: function () {
@@ -1602,20 +1781,23 @@
             closeModal();
             renderLock();
           }
-        }, ["🔒 Lock (keep signed in)"]),
+        }, ["🔒 Lock"]),
         el("button", {
-          class: "btn btn-ghost btn-full btn-danger",
+          class: "btn btn-ghost btn-full",
           style: "margin-top:8px;",
           onClick: function () {
-            confirmWithPin("Enter your PIN to sign out of this account on this device.", function () {
-              signOut();
+            closeModal();
+            renderDeviceName(function () {
+              render();
             });
           }
-        }, ["Sign out"]),
+        }, ["Rename this device"]),
         el("div", { class: "modal-actions" }, [
           el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
         ])
-      ];
+      );
+
+      return children;
     }
 
     return modalShell("Account", body());
@@ -1648,6 +1830,7 @@
           var restoreBtn = el("button", {
             class: "btn btn-primary btn-sm",
             onClick: function () {
+              logAudit("restore_item", "item", t.item.id, { name: t.item.name });
               restoreFromTrash(t);
               saveDB(db);
               ui.modal = trashModal();
@@ -1659,6 +1842,7 @@
             class: "icon-btn",
             onClick: function () {
               confirmWithPin("Enter your PIN to permanently delete \"" + t.item.name + "\". This cannot be undone.", function () {
+                logAudit("permanent_delete_item", "item", t.item.id, { name: t.item.name });
                 db.trash = db.trash.filter(function (x) { return x.id !== t.id; });
                 saveDB(db);
                 ui.modal = trashModal();
@@ -1781,6 +1965,7 @@
             confirmWithPin(
               "This will permanently clear every logged added and sold entry. Enter your PIN to confirm.",
               function () {
+                logAudit("reset_activity", "activity", null, { entries_cleared: db.activity.length });
                 db.activity = [];
                 saveDB(db);
                 ui.modal = activityModal();
@@ -1854,6 +2039,7 @@
               class: "icon-btn tiny",
               onClick: function () {
                 confirmWithPin("Enter your PIN to delete this sold entry.", function () {
+                  logAudit("delete_sold", "sold", s.id, { itemId: s.itemId, size: s.size, qty: s.qty });
                   db.sold = db.sold.filter(function (x) { return x.id !== s.id; });
                   saveDB(db);
                   ui.modal = soldModal();
@@ -1887,6 +2073,7 @@
             confirmWithPin(
               "This will permanently clear every sold total for every product. Enter your PIN to confirm.",
               function () {
+                logAudit("reset_sold", "sold", null, { entries_cleared: db.sold.length });
                 db.sold = [];
                 saveDB(db);
                 ui.modal = soldModal();
@@ -1933,6 +2120,7 @@
                 ? "This location has stock assigned to it. Enter your PIN to delete it anyway — stock entries here will be removed too."
                 : "Enter your PIN to delete this location.";
               confirmWithPin(msg, function () {
+                logAudit("delete_location", "location", loc.id, { code: loc.code });
                 db.locations = db.locations.filter(function (l) { return l.id !== loc.id; });
                 db.stock = db.stock.filter(function (s) { return s.locationId !== loc.id; });
                 saveDB(db);
@@ -2152,6 +2340,7 @@
           if (!computeCanSave()) return;
           var item = { id: uid(), sku: sku.trim(), name: name.trim(), category: category.trim(), createdAt: Date.now() };
           db.items.push(item);
+          logAudit("add_item", "item", item.id, { name: item.name, sku: item.sku });
           rows.forEach(function (r) {
             if (!r.size.trim() || !r.locationId || r.qty === "") return;
             db.stock.push({ id: uid(), itemId: item.id, locationId: r.locationId, size: r.size.trim(), qty: Number(r.qty) });
@@ -2181,25 +2370,20 @@
     return modalShell("Add a product", body());
   }
 
-  // First: is this a magic-link callback? If so, handle it and stop —
-  // the page will reload once the session is stored.
-  var isAuthCallback = checkAuthCallback();
-
-  if (!isAuthCallback) {
-    if (!getAuthSession()) {
-      renderLogin();
-    } else if (!unlocked) {
-      renderLock();
-    } else {
-      render();
-      initialSync();
-    }
+  if (!unlocked) {
+    renderLock();
+  } else {
+    render();
+    initialSync();
+    refreshAdminStatus().then(function () {
+      if (ui.modal === null) render();
+    });
   }
 
   // Pull remote changes periodically so other devices' edits show up here too.
   // Skipped while a modal is open, so it never clobbers an in-progress edit.
   setInterval(function () {
-    if (getAuthSession() && unlocked && !syncInFlight && !ui.modal) {
+    if (unlocked && !syncInFlight && !ui.modal) {
       pullFromSupabase().catch(function (err) {
         console.error(err);
         setSyncStatus(navigator.onLine ? "error" : "offline", err.message);
