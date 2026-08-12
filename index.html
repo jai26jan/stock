@@ -140,6 +140,10 @@
   .export-row-label { font-size: 14px; font-weight: 700; color: var(--ink); }
   .export-row-desc { font-size: 11px; color: var(--slate); margin-top: 2px; }
 
+  .account-info { background: #F4F2EC; border-radius: 10px; padding: 14px; margin-bottom: 16px; text-align: center; }
+  .account-email-label { font-size: 10px; color: var(--slate); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+  .account-email { font-size: 15px; font-weight: 700; color: var(--ink); word-break: break-all; }
+
   .loc-row { display: grid; grid-template-columns: 90px 1fr 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .loc-row input { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 14px; outline: none; }
   .loc-row input:first-child { font-weight: 700; text-transform: uppercase; }
@@ -228,13 +232,37 @@
   var SUPABASE_URL = "https://ywmvcmogvkimwhmngtzh.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3bXZjbW9ndmtpbXdobW5ndHpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MjA3OTcsImV4cCI6MjEwMTk5Njc5N30.3h1Dh4ya0mDKhfcGEuM1rj-y63LCl8evBdMsEPdfBBU";
 
+  var AUTH_SESSION_KEY = "stockmap_auth_session_v1";
+
+  function getAuthSession() {
+    try {
+      var raw = localStorage.getItem(AUTH_SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function setAuthSession(session) {
+    try {
+      if (session) localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+      else localStorage.removeItem(AUTH_SESSION_KEY);
+    } catch (e) {}
+  }
+  function getAuthToken() {
+    var s = getAuthSession();
+    return s && s.access_token ? s.access_token : null;
+  }
+  function getAuthEmail() {
+    var s = getAuthSession();
+    return s && s.user && s.user.email ? s.user.email : "";
+  }
+
   var syncStatus = "idle"; // idle | syncing | error | offline
   var syncErrorMsg = "";
 
   function sbHeaders(extra) {
+    var token = getAuthToken() || SUPABASE_ANON_KEY;
     var h = {
       "apikey": SUPABASE_ANON_KEY,
-      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + token,
       "Content-Type": "application/json"
     };
     if (extra) for (var k in extra) h[k] = extra[k];
@@ -261,6 +289,55 @@
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Auth: magic link sign-in via Supabase Auth
+  // ---------------------------------------------------------------------
+  function sendMagicLink(email) {
+    return fetch(SUPABASE_URL + "/auth/v1/otp", {
+      method: "POST",
+      headers: { "apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, create_user: true })
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) { throw new Error("Couldn't send link: " + t); });
+      }
+      return true;
+    });
+  }
+
+  // Supabase redirects back with #access_token=...&refresh_token=...&... in the URL hash
+  // after the person taps the magic link in their email.
+  function checkAuthCallback() {
+    var hash = window.location.hash;
+    if (!hash || hash.indexOf("access_token") === -1) return false;
+    var params = new URLSearchParams(hash.slice(1));
+    var accessToken = params.get("access_token");
+    var refreshToken = params.get("refresh_token");
+    if (!accessToken) return false;
+
+    // Fetch the user's profile to store their email alongside the session.
+    fetch(SUPABASE_URL + "/auth/v1/user", {
+      headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + accessToken }
+    }).then(function (res) { return res.json(); })
+      .then(function (user) {
+        setAuthSession({ access_token: accessToken, refresh_token: refreshToken, user: user });
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+        location.reload();
+      })
+      .catch(function () {
+        setAuthSession({ access_token: accessToken, refresh_token: refreshToken, user: null });
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+        location.reload();
+      });
+    return true;
+  }
+
+  function signOut() {
+    setAuthSession(null);
+    sessionStorage.removeItem("stockmap_unlocked");
+    location.reload();
+  }
+
   var STORAGE_KEY = "stockmap_db_v1";
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -275,6 +352,72 @@
   }
   function setSavedPin(pin) {
     try { localStorage.setItem(PIN_KEY, pin); } catch (e) {}
+  }
+
+  function renderLogin() {
+    var root = document.getElementById("app");
+    root.innerHTML = "";
+    var email = "";
+    var sent = false;
+    var sending = false;
+    var errorMsg = "";
+
+    function body() {
+      var wrap = el("div", { class: "lock-screen" }, [
+        el("div", { class: "brand-mark", style: "margin:0 auto 16px;width:48px;height:48px;font-size:20px;" }, ["S"]),
+        el("h2", {}, [sent ? "Check your email" : "Sign in"]),
+        el("p", { class: "lock-sub" }, [
+          sent
+            ? "We sent a sign-in link to " + email + ". Open it on this device to continue."
+            : "Enter your email — we'll send you a link to sign in, no password needed."
+        ])
+      ]);
+
+      if (!sent) {
+        var emailInput = el("input", {
+          class: "lock-input",
+          style: "font-size:16px;letter-spacing:normal;text-align:left;",
+          type: "email", placeholder: "you@example.com",
+          value: email,
+          onInput: function (e) { email = e.target.value; }
+        });
+        var sendBtn = el("button", {
+          class: "btn btn-primary btn-full",
+          onClick: function () {
+            if (!email.trim() || sending) return;
+            sending = true;
+            errorMsg = "";
+            renderInner();
+            sendMagicLink(email.trim()).then(function () {
+              sending = false;
+              sent = true;
+              renderInner();
+            }).catch(function (err) {
+              sending = false;
+              errorMsg = "Couldn't send the link. Check the email and try again.";
+              renderInner();
+            });
+          }
+        }, [sending ? "Sending…" : "Send sign-in link"]);
+
+        wrap.appendChild(emailInput);
+        if (errorMsg) wrap.appendChild(el("p", { class: "lock-error" }, [errorMsg]));
+        wrap.appendChild(sendBtn);
+      } else {
+        wrap.appendChild(el("button", {
+          class: "btn btn-ghost btn-full",
+          onClick: function () { sent = false; renderInner(); }
+        }, ["Use a different email"]));
+      }
+
+      return wrap;
+    }
+
+    function renderInner() {
+      root.innerHTML = "";
+      root.appendChild(body());
+    }
+    renderInner();
   }
 
   function renderLock() {
@@ -618,12 +761,8 @@
       el("div", { class: "topbar-actions" }, [
         el("button", {
           class: "btn btn-ghost",
-          onClick: function () {
-            sessionStorage.removeItem("stockmap_unlocked");
-            unlocked = false;
-            renderLock();
-          }
-        }, ["🔒"]),
+          onClick: function () { ui.modal = accountModal(); render(); }
+        }, ["👤"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageLocationsModal(); render(); } }, ["📍"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = soldModal(); render(); } }, ["🧾"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
@@ -1447,6 +1586,41 @@
     return months[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
   }
 
+  function accountModal() {
+    function body() {
+      var email = getAuthEmail() || "Signed in";
+      return [
+        el("div", { class: "account-info" }, [
+          el("div", { class: "account-email-label" }, ["Signed in as"]),
+          el("div", { class: "account-email" }, [email])
+        ]),
+        el("button", {
+          class: "btn btn-ghost btn-full",
+          onClick: function () {
+            sessionStorage.removeItem("stockmap_unlocked");
+            unlocked = false;
+            closeModal();
+            renderLock();
+          }
+        }, ["🔒 Lock (keep signed in)"]),
+        el("button", {
+          class: "btn btn-ghost btn-full btn-danger",
+          style: "margin-top:8px;",
+          onClick: function () {
+            confirmWithPin("Enter your PIN to sign out of this account on this device.", function () {
+              signOut();
+            });
+          }
+        }, ["Sign out"]),
+        el("div", { class: "modal-actions" }, [
+          el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+        ])
+      ];
+    }
+
+    return modalShell("Account", body());
+  }
+
   function trashModal() {
     function body() {
       if (db.trash.length === 0) {
@@ -2007,17 +2181,25 @@
     return modalShell("Add a product", body());
   }
 
-  if (!unlocked) {
-    renderLock();
-  } else {
-    render();
-    initialSync();
+  // First: is this a magic-link callback? If so, handle it and stop —
+  // the page will reload once the session is stored.
+  var isAuthCallback = checkAuthCallback();
+
+  if (!isAuthCallback) {
+    if (!getAuthSession()) {
+      renderLogin();
+    } else if (!unlocked) {
+      renderLock();
+    } else {
+      render();
+      initialSync();
+    }
   }
 
   // Pull remote changes periodically so other devices' edits show up here too.
   // Skipped while a modal is open, so it never clobbers an in-progress edit.
   setInterval(function () {
-    if (unlocked && !syncInFlight && !ui.modal) {
+    if (getAuthSession() && unlocked && !syncInFlight && !ui.modal) {
       pullFromSupabase().catch(function (err) {
         console.error(err);
         setSyncStatus(navigator.onLine ? "error" : "offline", err.message);
