@@ -58,6 +58,8 @@
   .filters select { border: 1px solid #DAD6C9; border-radius: 8px; padding: 10px; font-size: 14px; background: #fff; width: 100%; }
   .filter-row { display: flex; gap: 8px; }
   .filter-row select { flex: 1; min-width: 0; }
+  .debug-panel { display: none; margin-top: 8px; padding: 10px; background: #FFF3CD; border: 2px dashed #E8A33D;
+                 border-radius: 8px; font-family: monospace; font-size: 10.5px; white-space: pre-wrap; word-break: break-all; color: #664D03; }
 
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
@@ -799,7 +801,11 @@
     distinctSizes.sort();
 
     var sizeSelect = el("select", {
-      onChange: function (e) { ui.sizeFilter = e.target.value; renderContentOnly(); }
+      onChange: function (e) {
+        ui.sizeFilter = e.target.value;
+        renderContentOnly();
+        updateDebugPanel();
+      }
     }, [el("option", { value: "" }, ["All sizes"])].concat(
       distinctSizes.map(function (sz) {
         var opt = el("option", { value: sz }, [sz]);
@@ -808,10 +814,28 @@
       })
     ));
 
+    var debugPanel = el("div", { id: "debug-panel", class: "debug-panel" });
+
     return el("div", { class: "filters", id: "filters" }, [
       el("div", { class: "search-box" }, [el("span", {}, ["🔍"]), searchInput]),
-      el("div", { class: "filter-row" }, [locSelect, sizeSelect])
+      el("div", { class: "filter-row" }, [locSelect, sizeSelect]),
+      debugPanel
     ]);
+  }
+
+  function updateDebugPanel() {
+    var panel = document.getElementById("debug-panel");
+    if (!panel) return;
+    if (!ui.sizeFilter) { panel.innerHTML = ""; panel.style.display = "none"; return; }
+    panel.style.display = "block";
+    var target = ui.sizeFilter;
+    var matchingRows = db.stock.filter(function (r) { return r.size === target; });
+    var allSizesRaw = db.stock.map(function (r) { return JSON.stringify(r.size); });
+    var lines = [];
+    lines.push("DEBUG — filtering by: " + JSON.stringify(target) + " (length " + target.length + ")");
+    lines.push("Stock rows matching exactly: " + matchingRows.length);
+    lines.push("All stored sizes (raw): " + allSizesRaw.join(", "));
+    panel.textContent = lines.join("\n");
   }
 
   function renderContentOnly() {
