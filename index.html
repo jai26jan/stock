@@ -56,6 +56,8 @@
                 border-radius: 8px; padding: 10px 12px; }
   .search-box input { border: none; outline: none; flex: 1; font-size: 15px; background: transparent; }
   .filters select { border: 1px solid #DAD6C9; border-radius: 8px; padding: 10px; font-size: 14px; background: #fff; width: 100%; }
+  .filter-row { display: flex; gap: 8px; }
+  .filter-row select { flex: 1; min-width: 0; }
 
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
@@ -656,7 +658,7 @@
   }
 
   var db = loadDB();
-  var ui = { query: "", locationFilter: "", modal: null };
+  var ui = { query: "", locationFilter: "", sizeFilter: "", modal: null };
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -707,7 +709,8 @@
         (it.category || "").toLowerCase().indexOf(q) !== -1;
       var rows = db.stock.filter(function (s) { return s.itemId === it.id; });
       var matchesLoc = !ui.locationFilter || rows.some(function (r) { return r.locationId === ui.locationFilter; });
-      return matchesQuery && matchesLoc;
+      var matchesSize = !ui.sizeFilter || rows.some(function (r) { return r.size === ui.sizeFilter; });
+      return matchesQuery && matchesLoc && matchesSize;
     });
   }
 
@@ -778,7 +781,7 @@
       value: ui.query,
       onInput: function (e) { ui.query = e.target.value; renderContentOnly(); }
     });
-    var select = el("select", {
+    var locSelect = el("select", {
       onChange: function (e) { ui.locationFilter = e.target.value; renderContentOnly(); }
     }, [el("option", { value: "" }, ["All locations"])].concat(
       db.locations.map(function (l) {
@@ -787,9 +790,27 @@
         return opt;
       })
     ));
+
+    var distinctSizes = [];
+    var seenSizes = {};
+    db.stock.forEach(function (s) {
+      if (!seenSizes[s.size]) { seenSizes[s.size] = true; distinctSizes.push(s.size); }
+    });
+    distinctSizes.sort();
+
+    var sizeSelect = el("select", {
+      onChange: function (e) { ui.sizeFilter = e.target.value; renderContentOnly(); }
+    }, [el("option", { value: "" }, ["All sizes"])].concat(
+      distinctSizes.map(function (sz) {
+        var opt = el("option", { value: sz }, [sz]);
+        if (sz === ui.sizeFilter) opt.selected = true;
+        return opt;
+      })
+    ));
+
     return el("div", { class: "filters", id: "filters" }, [
       el("div", { class: "search-box" }, [el("span", {}, ["🔍"]), searchInput]),
-      select
+      el("div", { class: "filter-row" }, [locSelect, sizeSelect])
     ]);
   }
 
