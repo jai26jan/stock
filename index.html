@@ -58,6 +58,8 @@
   .filters select { border: 1px solid #DAD6C9; border-radius: 8px; padding: 10px; font-size: 14px; background: #fff; width: 100%; }
   .filter-row { display: flex; gap: 8px; }
   .filter-row select { flex: 1; min-width: 0; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--slate); cursor: pointer; }
+  .checkbox-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--amber-deep); cursor: pointer; }
 
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
@@ -658,7 +660,7 @@
   }
 
   var db = loadDB();
-  var ui = { query: "", locationFilter: "", sizeFilter: "", modal: null };
+  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, modal: null };
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -710,7 +712,12 @@
       var rows = db.stock.filter(function (s) { return s.itemId === it.id; });
       var matchesLoc = !ui.locationFilter || rows.some(function (r) { return r.locationId === ui.locationFilter; });
       var matchesSize = !ui.sizeFilter || rows.some(function (r) { return r.size === ui.sizeFilter; });
-      return matchesQuery && matchesLoc && matchesSize;
+      var matchesQty = !ui.hideZero || rows.some(function (r) {
+        var locOk = !ui.locationFilter || r.locationId === ui.locationFilter;
+        var sizeOk = !ui.sizeFilter || r.size === ui.sizeFilter;
+        return locOk && sizeOk && r.qty > 0;
+      });
+      return matchesQuery && matchesLoc && matchesSize && matchesQty;
     });
   }
 
@@ -808,9 +815,22 @@
       })
     ));
 
+    var hideZeroCheckbox = el("input", {
+      type: "checkbox",
+      id: "hide-zero-checkbox",
+      onChange: function (e) { ui.hideZero = e.target.checked; renderContentOnly(); }
+    });
+    if (ui.hideZero) hideZeroCheckbox.checked = true;
+
+    var hideZeroRow = el("label", { class: "checkbox-row", for: "hide-zero-checkbox" }, [
+      hideZeroCheckbox,
+      el("span", {}, ["Hide zero quantity"])
+    ]);
+
     return el("div", { class: "filters", id: "filters" }, [
       el("div", { class: "search-box" }, [el("span", {}, ["🔍"]), searchInput]),
-      el("div", { class: "filter-row" }, [locSelect, sizeSelect])
+      el("div", { class: "filter-row" }, [locSelect, sizeSelect]),
+      hideZeroRow
     ]);
   }
 
@@ -835,6 +855,9 @@
       var rows = db.stock.filter(function (s) { return s.itemId === item.id; });
       if (ui.sizeFilter) {
         rows = rows.filter(function (r) { return r.size === ui.sizeFilter; });
+      }
+      if (ui.hideZero) {
+        rows = rows.filter(function (r) { return r.qty > 0; });
       }
       wrap.appendChild(itemCard(item, rows, locMap));
     });
