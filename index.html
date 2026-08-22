@@ -285,6 +285,27 @@
     });
   }
 
+  // Deletes a single row from a Supabase table by id. Fire-and-forget from
+  // the caller's perspective (errors are logged, not thrown) since the local
+  // change has already happened and the UI has already moved on — but this
+  // is what actually makes deletes stick instead of being pulled back by
+  // the next periodic sync.
+  function sbDeleteOne(table, id) {
+    sbRequest(table, "DELETE", "id=eq." + encodeURIComponent(id)).catch(function (err) {
+      console.error("Remote delete failed (" + table + " " + id + ")", err);
+    });
+  }
+
+  // Deletes every row in a Supabase table matching a filter (e.g. "reset all
+  // sold" or "reset all activity"). Uses a filter that matches everything
+  // when no narrower one is needed, since Supabase requires some filter on
+  // DELETE to avoid accidental full-table wipes without an explicit condition.
+  function sbDeleteWhere(table, filterQuery) {
+    sbRequest(table, "DELETE", filterQuery).catch(function (err) {
+      console.error("Remote bulk delete failed (" + table + ")", err);
+    });
+  }
+
   var ADMIN_DEVICE_KEY = "stockmap_is_admin_device_v1";
   function isAdminDevice() {
     try { return localStorage.getItem(ADMIN_DEVICE_KEY) === "1"; } catch (e) { return false; }
@@ -903,12 +924,15 @@
     });
     db.items = db.items.filter(function (i) { return i.id !== item.id; });
     db.stock = db.stock.filter(function (s) { return s.itemId !== item.id; });
+    sbDeleteOne("items", item.id);
+    sbDeleteWhere("stock", "item_id=eq." + encodeURIComponent(item.id));
   }
 
   function restoreFromTrash(trashEntry) {
     db.items.push(trashEntry.item);
     trashEntry.stock.forEach(function (s) { db.stock.push(s); });
     db.trash = db.trash.filter(function (t) { return t.id !== trashEntry.id; });
+    sbDeleteOne("trash", trashEntry.id);
   }
 
   function recordSale(row, amount) {
@@ -1059,6 +1083,7 @@
                     logAudit("delete_stock", "stock", r.id, { itemId: r.itemId, size: r.size, qty: r.qty });
                     db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
                     saveDB(db);
+                    sbDeleteOne("stock", r.id);
                     closeModal();
                   });
                 }
@@ -1249,6 +1274,7 @@
               logAudit("delete_stock", "stock", r.id, { itemId: r.itemId, size: r.size, qty: r.qty });
               db.stock = db.stock.filter(function (s) { return s.id !== r.id; });
               saveDB(db);
+              sbDeleteOne("stock", r.id);
               ui.modal = editItemModal(item);
               render();
             });
@@ -1892,6 +1918,7 @@
                 logAudit("permanent_delete_item", "item", t.item.id, { name: t.item.name });
                 db.trash = db.trash.filter(function (x) { return x.id !== t.id; });
                 saveDB(db);
+                sbDeleteOne("trash", t.id);
                 ui.modal = trashModal();
                 render();
               });
@@ -2013,8 +2040,12 @@
               "This will permanently clear every logged added and sold entry. Enter your PIN to confirm.",
               function () {
                 logAudit("reset_activity", "activity", null, { entries_cleared: db.activity.length });
+                var idsToDelete = db.activity.map(function (a) { return a.id; });
                 db.activity = [];
                 saveDB(db);
+                if (idsToDelete.length > 0) {
+                  sbDeleteWhere("activity", "id=in.(" + idsToDelete.map(encodeURIComponent).join(",") + ")");
+                }
                 ui.modal = activityModal();
                 render();
               }
@@ -2089,6 +2120,7 @@
                   logAudit("delete_sold", "sold", s.id, { itemId: s.itemId, size: s.size, qty: s.qty });
                   db.sold = db.sold.filter(function (x) { return x.id !== s.id; });
                   saveDB(db);
+                  sbDeleteOne("sold", s.id);
                   ui.modal = soldModal();
                   render();
                 });
@@ -2121,8 +2153,12 @@
               "This will permanently clear every sold total for every product. Enter your PIN to confirm.",
               function () {
                 logAudit("reset_sold", "sold", null, { entries_cleared: db.sold.length });
+                var idsToDelete = db.sold.map(function (s) { return s.id; });
                 db.sold = [];
                 saveDB(db);
+                if (idsToDelete.length > 0) {
+                  sbDeleteWhere("sold", "id=in.(" + idsToDelete.map(encodeURIComponent).join(",") + ")");
+                }
                 ui.modal = soldModal();
                 render();
               }
@@ -2171,6 +2207,8 @@
                 db.locations = db.locations.filter(function (l) { return l.id !== loc.id; });
                 db.stock = db.stock.filter(function (s) { return s.locationId !== loc.id; });
                 saveDB(db);
+                sbDeleteOne("locations", loc.id);
+                sbDeleteWhere("stock", "location_id=eq." + encodeURIComponent(loc.id));
                 ui.modal = manageLocationsModal();
                 render();
               });
