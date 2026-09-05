@@ -42,6 +42,29 @@
   .modal-actions .btn-ghost { color: var(--ink); border-color: #D8D4C8; }
   .modal-actions .btn-danger { color: var(--red); border-color: #E8C9C3; }
   .modal-actions .btn-danger-solid { background: var(--red); color: #fff; }
+  .btn-quick { background: var(--ink); color: var(--amber); font-weight: 700; }
+
+  .quick-search-input { width: 100%; font-size: 17px; padding: 14px; border: 2px solid var(--amber-deep);
+                         border-radius: 10px; outline: none; margin-bottom: 10px; }
+  .quick-flash { background: #EAF2EC; color: var(--green); font-weight: 700; font-size: 13px;
+                 padding: 10px 12px; border-radius: 8px; margin-bottom: 10px; text-align: center; }
+  .quick-results { max-height: 55vh; overflow-y: auto; }
+  .quick-block { margin-bottom: 16px; }
+  .quick-block-title { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+  .quick-size-row { display: flex; flex-direction: column; gap: 8px; }
+  .quick-size-pill { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                      background: #EAF2EC; border-radius: 10px; padding: 8px 10px; }
+  .quick-pill-low { background: #FCEEDC; }
+  .quick-pill-out { background: #F8E4E0; }
+  .quick-size-info { display: flex; flex-direction: column; align-items: center; flex: 1; }
+  .quick-size-label { font-weight: 700; font-size: 14px; color: var(--ink); }
+  .quick-size-meta { font-size: 10.5px; color: var(--slate); }
+  .quick-adj-btn { width: 42px; height: 42px; border-radius: 50%; border: none; background: #fff;
+                    font-size: 20px; font-weight: 700; color: var(--ink); flex-shrink: 0; }
+  .quick-adj-btn:active { transform: scale(0.92); }
+  .quick-adj-btn:disabled { opacity: 0.3; }
+  .quick-minus { color: var(--red); }
+  .quick-plus { color: var(--green); }
   .btn-sm { padding: 6px 10px; font-size: 12px; }
   .btn-full { width: 100%; justify-content: center; }
 
@@ -783,6 +806,7 @@
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = exportModal(); render(); } }, ["⬇️"]),
         el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = trashModal(); render(); } }, ["🗑️"]),
+        el("button", { class: "btn btn-quick", onClick: function () { ui.modal = quickUpdateModal(); render(); } }, ["⚡ Quick Update"]),
         el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
       ])
     ]);
@@ -2058,6 +2082,145 @@
     }
 
     return modalShell("Activity", body());
+  }
+
+  function quickUpdateModal() {
+    var query = "";
+    var flashMsg = "";
+    var flashTimer = null;
+    var thisModalToken = null;
+
+    function locCode(locationId) {
+      var loc = db.locations.find(function (l) { return l.id === locationId; });
+      return loc ? loc.code : "?";
+    }
+
+    function refreshAndFocus() {
+      if (ui.modal !== thisModalToken) return;
+      ui.modal = quickUpdateModal_continue();
+      thisModalToken = ui.modal;
+      render();
+      focusSearchInput();
+    }
+
+    function focusSearchInput() {
+      var input = document.getElementById("quick-search-input");
+      if (input) {
+        input.focus();
+        var len = input.value.length;
+        try { input.setSelectionRange(len, len); } catch (e) {}
+      }
+    }
+
+    function showFlash(msg) {
+      flashMsg = msg;
+      clearTimeout(flashTimer);
+      refreshAndFocus();
+      flashTimer = setTimeout(function () {
+        flashMsg = "";
+        refreshAndFocus();
+      }, 1400);
+    }
+
+    function quickAdjust(row, delta) {
+      var newQty = Math.max(0, row.qty + delta);
+      var item = db.items.find(function (i) { return i.id === row.itemId; });
+      updateQty(row, newQty);
+      showFlash((delta > 0 ? "+1 " : "−1 ") + (item ? item.name : "") + " (" + row.size + ") → " + newQty);
+    }
+
+    function matchingRows() {
+      var q = query.trim().toLowerCase();
+      if (!q) return [];
+      var matchedItemIds = db.items.filter(function (it) {
+        return it.name.toLowerCase().indexOf(q) !== -1 || (it.sku || "").toLowerCase().indexOf(q) !== -1;
+      }).map(function (it) { return it.id; });
+      return db.stock.filter(function (s) { return matchedItemIds.indexOf(s.itemId) !== -1; });
+    }
+
+    function body() {
+      var searchInput = el("input", {
+        class: "quick-search-input",
+        placeholder: "Type a product name…",
+        value: query,
+        id: "quick-search-input",
+        onInput: function (e) {
+          query = e.target.value;
+          ui.modal = quickUpdateModal_continue();
+          thisModalToken = ui.modal;
+          render();
+          focusSearchInput();
+        }
+      });
+
+      var resultsWrap = el("div", { class: "quick-results" });
+
+      if (query.trim()) {
+        var rows = matchingRows();
+        var byItem = {};
+        rows.forEach(function (r) {
+          if (!byItem[r.itemId]) byItem[r.itemId] = [];
+          byItem[r.itemId].push(r);
+        });
+        var itemIds = Object.keys(byItem);
+
+        if (itemIds.length === 0) {
+          resultsWrap.appendChild(el("p", { class: "lock-sub" }, ["No matching products."]));
+        }
+
+        itemIds.forEach(function (itemId) {
+          var item = db.items.find(function (i) { return i.id === itemId; });
+          if (!item) return;
+          var block = el("div", { class: "quick-block" }, [
+            el("div", { class: "quick-block-title" }, [item.name])
+          ]);
+          var sizeRow = el("div", { class: "quick-size-row" });
+          byItem[itemId]
+            .slice()
+            .sort(function (a, b) { return a.size < b.size ? -1 : a.size > b.size ? 1 : 0; })
+            .forEach(function (r) {
+              var minusBtn = el("button", {
+                class: "quick-adj-btn quick-minus",
+                onClick: function () { quickAdjust(r, -1); }
+              }, ["−"]);
+              if (r.qty <= 0) minusBtn.disabled = true;
+              var plusBtn = el("button", {
+                class: "quick-adj-btn quick-plus",
+                onClick: function () { quickAdjust(r, 1); }
+              }, ["+"]);
+
+              sizeRow.appendChild(el("div", { class: "quick-size-pill" + (r.qty === 0 ? " quick-pill-out" : r.qty <= 3 ? " quick-pill-low" : "") }, [
+                minusBtn,
+                el("div", { class: "quick-size-info" }, [
+                  el("span", { class: "quick-size-label" }, [r.size]),
+                  el("span", { class: "quick-size-meta" }, [locCode(r.locationId) + " · " + r.qty])
+                ]),
+                plusBtn
+              ]));
+            });
+          block.appendChild(sizeRow);
+          resultsWrap.appendChild(block);
+        });
+      } else {
+        resultsWrap.appendChild(el("p", { class: "lock-sub" }, ["Start typing to find a product — you'll be able to tap + or − right here."]));
+      }
+
+      return [
+        searchInput,
+        flashMsg ? el("div", { class: "quick-flash" }, [flashMsg]) : null,
+        resultsWrap,
+        el("div", { class: "modal-actions" }, [
+          el("button", { class: "btn btn-primary", onClick: closeModal }, ["Done"])
+        ])
+      ];
+    }
+
+    function quickUpdateModal_continue() {
+      return modalShell("Quick Update", body());
+    }
+
+    thisModalToken = quickUpdateModal_continue();
+    return thisModalToken;
   }
 
   function soldModal() {
