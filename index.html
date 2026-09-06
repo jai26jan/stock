@@ -20,8 +20,13 @@
   html, body { margin: 0; padding: 0; background: var(--paper); }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--ink); }
 
-  .topbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px;
-            background: var(--ink); color: var(--paper); position: sticky; top: 0; z-index: 20; }
+  .topbar { padding: 14px 18px 10px; background: var(--ink); color: var(--paper); position: sticky; top: 0; z-index: 20; }
+  .topbar-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .topbar-sort { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(242,240,234,.15); }
+  .topbar-sort-label { font-size: 11.5px; color: #9AA5B5; flex-shrink: 0; }
+  .sort-select { flex: 1; background: rgba(242,240,234,.08); color: var(--paper); border: 1px solid rgba(242,240,234,.25);
+                 border-radius: 7px; padding: 7px 9px; font-size: 12.5px; }
+  .sort-select option { color: var(--ink); }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand-mark { background: var(--amber); color: var(--ink); width: 34px; height: 34px; border-radius: 8px;
                 display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; flex-shrink: 0; }
@@ -704,7 +709,7 @@
   }
 
   var db = loadDB();
-  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, modal: null };
+  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, sortBy: "name", modal: null };
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -748,7 +753,7 @@
 
   function filteredItems() {
     var q = ui.query.trim().toLowerCase();
-    return db.items.filter(function (it) {
+    var items = db.items.filter(function (it) {
       var matchesQuery = !q ||
         it.name.toLowerCase().indexOf(q) !== -1 ||
         (it.sku || "").toLowerCase().indexOf(q) !== -1 ||
@@ -763,6 +768,23 @@
       });
       return matchesQuery && matchesLoc && matchesSize && matchesQty;
     });
+
+    function totalQtyFor(item) {
+      return db.stock
+        .filter(function (s) { return s.itemId === item.id; })
+        .reduce(function (sum, s) { return sum + s.qty; }, 0);
+    }
+
+    items = items.slice();
+    if (ui.sortBy === "qty") {
+      items.sort(function (a, b) { return totalQtyFor(a) - totalQtyFor(b); });
+    } else if (ui.sortBy === "recent") {
+      items.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    } else {
+      items.sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
+    }
+
+    return items;
   }
 
   function buildApp() {
@@ -777,37 +799,52 @@
   }
 
   function buildTopbar() {
+    var sortSelect = el("select", {
+      class: "sort-select",
+      onChange: function (e) { ui.sortBy = e.target.value; renderContentOnly(); }
+    }, [
+      (function () { var o = el("option", { value: "name" }, ["Name (A–Z)"]); if (ui.sortBy === "name") o.selected = true; return o; })(),
+      (function () { var o = el("option", { value: "qty" }, ["Quantity (low to high)"]); if (ui.sortBy === "qty") o.selected = true; return o; })(),
+      (function () { var o = el("option", { value: "recent" }, ["Recently added"]); if (ui.sortBy === "recent") o.selected = true; return o; })()
+    ]);
+
     return el("header", { class: "topbar" }, [
-      el("div", { class: "brand" }, [
-        el("div", { class: "brand-mark" }, ["S"]),
-        el("div", {}, [
-          el("div", { class: "brand-title" }, ["STOCKMAP"]),
-          el("div", {
-            id: "sync-indicator",
-            class: "sync-indicator sync-" + syncStatus,
-            onClick: function () { if (syncStatus === "error" || syncStatus === "offline") pushToSupabase(); }
-          }, [
-            syncStatus === "syncing" ? "Syncing…"
-              : syncStatus === "error" ? "Sync error — tap to retry"
-              : syncStatus === "offline" ? "Offline — saved locally"
-              : "Synced"
+      el("div", { class: "topbar-top" }, [
+        el("div", { class: "brand" }, [
+          el("div", { class: "brand-mark" }, ["S"]),
+          el("div", {}, [
+            el("div", { class: "brand-title" }, ["STOCKMAP"]),
+            el("div", {
+              id: "sync-indicator",
+              class: "sync-indicator sync-" + syncStatus,
+              onClick: function () { if (syncStatus === "error" || syncStatus === "offline") pushToSupabase(); }
+            }, [
+              syncStatus === "syncing" ? "Syncing…"
+                : syncStatus === "error" ? "Sync error — tap to retry"
+                : syncStatus === "offline" ? "Offline — saved locally"
+                : "Synced"
+            ])
           ])
+        ]),
+        el("div", { class: "topbar-actions" }, [
+          el("button", {
+            class: "btn btn-ghost",
+            onClick: function () { ui.modal = accountModal(); render(); }
+          }, ["👤"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageLocationsModal(); render(); } }, ["📍"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = soldModal(); render(); } }, ["🧾"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = profitModal(); render(); } }, ["📊"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = exportModal(); render(); } }, ["⬇️"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = trashModal(); render(); } }, ["🗑️"]),
+          el("button", { class: "btn btn-quick", onClick: function () { ui.modal = quickUpdateModal(); render(); } }, ["⚡ Quick Update"]),
+          el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
         ])
       ]),
-      el("div", { class: "topbar-actions" }, [
-        el("button", {
-          class: "btn btn-ghost",
-          onClick: function () { ui.modal = accountModal(); render(); }
-        }, ["👤"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageLocationsModal(); render(); } }, ["📍"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = soldModal(); render(); } }, ["🧾"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = profitModal(); render(); } }, ["📊"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = exportModal(); render(); } }, ["⬇️"]),
-        el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = trashModal(); render(); } }, ["🗑️"]),
-        el("button", { class: "btn btn-quick", onClick: function () { ui.modal = quickUpdateModal(); render(); } }, ["⚡ Quick Update"]),
-        el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
+      el("div", { class: "topbar-sort" }, [
+        el("span", { class: "topbar-sort-label" }, ["Sort by"]),
+        sortSelect
       ])
     ]);
   }
