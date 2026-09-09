@@ -252,6 +252,29 @@
   .row input, .row select { border: 1px solid #DAD6C9; border-radius: 6px; padding: 9px; font-size: 15px; outline: none; }
   .row select:nth-of-type(2) { grid-column: 1 / -1; }
   .row.row-with-custom input[placeholder="Custom size"] { grid-column: 1 / -1; }
+
+  .size-chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .size-chip { padding: 9px 14px; border-radius: 20px; border: 1.5px solid #DAD6C9; background: #fff;
+               font-size: 13.5px; font-weight: 600; color: var(--ink); cursor: pointer; }
+  .size-chip:active { transform: scale(0.96); }
+  .size-chip-selected { background: var(--amber); border-color: var(--amber-deep); color: var(--ink); }
+  .custom-size-add-row { display: flex; gap: 8px; margin: 8px 0 4px; }
+  .custom-size-add-row input { flex: 1; border: 1px solid #DAD6C9; border-radius: 8px; padding: 9px 11px; font-size: 14px; outline: none; }
+
+  .menu-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 13px 4px;
+              background: transparent; border: none; border-bottom: 1px solid #F0EDE3; text-align: left; cursor: pointer; }
+  .menu-row:last-of-type { border-bottom: none; }
+  .menu-row:active { background: #FAF9F5; }
+  .menu-row-icon { font-size: 18px; flex-shrink: 0; }
+  .menu-row-label { flex: 1; font-size: 14.5px; font-weight: 600; color: var(--ink); }
+  .menu-row-arrow { color: var(--slate); font-size: 16px; }
+
+  .attention-banner { display: flex; align-items: center; gap: 8px; padding: 10px 16px 0; }
+  .attention-chips { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
+  .attention-chip { background: #FCEEDC; border: 1px solid #E8A33D; color: #8a5d1a; font-size: 12px; font-weight: 700;
+                     padding: 8px 12px; border-radius: 20px; cursor: pointer; text-align: left; }
+  .attention-chip:active { transform: scale(0.97); }
+  .attention-dismiss { background: transparent; border: none; color: var(--slate); font-size: 14px; padding: 6px; flex-shrink: 0; }
   .row-bottom { display: flex; gap: 8px; grid-column: 1 / -1; align-items: center; justify-content: flex-end; }
 
   .modal-actions { display: flex; flex-direction: column-reverse; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #EEEAE0; }
@@ -709,7 +732,7 @@
   }
 
   var db = loadDB();
-  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, sortBy: "name", modal: null };
+  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, sortBy: "name", attentionDismissed: false, modal: null };
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -791,11 +814,91 @@
     var shell = el("div", {}, [
       buildTopbar(),
       buildStats(),
+      buildAttentionBanner(),
       buildFilters(),
       buildContent(),
       el("div", { class: "save-indicator" }, ["Saved on this device"])
     ]);
     return shell;
+  }
+
+  function getAttentionData() {
+    var lowStockRows = db.stock.filter(function (r) { return r.qty <= 3; });
+    var lowStockItemIds = {};
+    lowStockRows.forEach(function (r) { lowStockItemIds[r.itemId] = true; });
+
+    var thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    var recentlySoldItemIds = {};
+    db.sold.forEach(function (s) {
+      if ((s.ts || 0) >= thirtyDaysAgo) recentlySoldItemIds[s.itemId] = true;
+    });
+    var slowMovers = db.items.filter(function (it) {
+      var hasStock = db.stock.some(function (s) { return s.itemId === it.id && s.qty > 0; });
+      var existedLongEnough = (it.createdAt || 0) <= thirtyDaysAgo;
+      return hasStock && existedLongEnough && !recentlySoldItemIds[it.id];
+    });
+
+    return {
+      lowStockCount: Object.keys(lowStockItemIds).length,
+      lowStockRowCount: lowStockRows.length,
+      slowMovers: slowMovers
+    };
+  }
+
+  function buildAttentionBanner() {
+    if (ui.attentionDismissed) return null;
+    var data = getAttentionData();
+    if (data.lowStockCount === 0 && data.slowMovers.length === 0) return null;
+
+    var parts = [];
+    if (data.lowStockCount > 0) {
+      parts.push(el("button", {
+        class: "attention-chip",
+        onClick: function () { ui.sizeFilter = ""; ui.hideZero = false; ui.query = ""; ui.locationFilter = ""; render(); scrollToLowStock(); }
+      }, ["⚠️ " + data.lowStockCount + " " + (data.lowStockCount === 1 ? "product" : "products") + " low or out of stock"]));
+    }
+    if (data.slowMovers.length > 0) {
+      parts.push(el("button", {
+        class: "attention-chip",
+        onClick: function () { ui.modal = slowMoversModal(data.slowMovers); render(); }
+      }, ["🐌 " + data.slowMovers.length + " " + (data.slowMovers.length === 1 ? "product hasn't" : "products haven't") + " sold in 30 days"]));
+    }
+
+    return el("div", { class: "attention-banner" }, [
+      el("div", { class: "attention-chips" }, parts),
+      el("button", {
+        class: "attention-dismiss",
+        onClick: function () { ui.attentionDismissed = true; render(); }
+      }, ["✕"])
+    ]);
+  }
+
+  function scrollToLowStock() {
+    setTimeout(function () {
+      var el2 = document.querySelector(".pill-out, .pill-low, .qty-out, .qty-low");
+      if (el2 && el2.scrollIntoView) el2.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+  }
+
+  function slowMoversModal(items) {
+    function body() {
+      var wrap = el("div", {});
+      items.forEach(function (item) {
+        var rows = db.stock.filter(function (s) { return s.itemId === item.id; });
+        var totalQty = rows.reduce(function (sum, r) { return sum + r.qty; }, 0);
+        wrap.appendChild(el("div", { class: "trash-row" }, [
+          el("div", { class: "trash-row-info" }, [
+            el("div", { class: "trash-row-name" }, [item.name]),
+            el("div", { class: "trash-row-meta" }, [totalQty + " units in stock, no sales in the last 30 days"])
+          ])
+        ]));
+      });
+      wrap.appendChild(el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+      ]));
+      return [wrap];
+    }
+    return modalShell("Not sold in 30 days", body());
   }
 
   function buildTopbar() {
@@ -827,17 +930,8 @@
           ])
         ]),
         el("div", { class: "topbar-actions" }, [
-          el("button", {
-            class: "btn btn-ghost",
-            onClick: function () { ui.modal = accountModal(); render(); }
-          }, ["👤"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageLocationsModal(); render(); } }, ["📍"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = soldModal(); render(); } }, ["🧾"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = priceModal(); render(); } }, ["💲"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = profitModal(); render(); } }, ["📊"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = activityModal(); render(); } }, ["📅"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = exportModal(); render(); } }, ["⬇️"]),
-          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = trashModal(); render(); } }, ["🗑️"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = reportsMenuModal(); render(); } }, ["📊 Reports"]),
+          el("button", { class: "btn btn-ghost", onClick: function () { ui.modal = manageMenuModal(); render(); } }, ["⚙️ Manage"]),
           el("button", { class: "btn btn-quick", onClick: function () { ui.modal = quickUpdateModal(); render(); } }, ["⚡ Quick Update"]),
           el("button", { class: "btn btn-primary", onClick: function () { ui.modal = addItemModal(); render(); } }, ["+ Add"])
         ])
@@ -1887,6 +1981,44 @@
     return modalShell("Admin", [el("p", { class: "lock-sub" }, ["Loading…"])]);
   }
 
+  function menuRow(icon, label, onClick) {
+    return el("button", { class: "menu-row", onClick: onClick }, [
+      el("span", { class: "menu-row-icon" }, [icon]),
+      el("span", { class: "menu-row-label" }, [label]),
+      el("span", { class: "menu-row-arrow" }, ["›"])
+    ]);
+  }
+
+  function reportsMenuModal() {
+    function body() {
+      return [
+        menuRow("🧾", "Sold", function () { ui.modal = soldModal(); render(); }),
+        menuRow("💲", "Prices", function () { ui.modal = priceModal(); render(); }),
+        menuRow("📈", "Profit & Loss", function () { ui.modal = profitModal(); render(); }),
+        menuRow("📅", "Activity", function () { ui.modal = activityModal(); render(); }),
+        menuRow("⬇️", "Export", function () { ui.modal = exportModal(); render(); }),
+        el("div", { class: "modal-actions" }, [
+          el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+        ])
+      ];
+    }
+    return modalShell("Reports", body());
+  }
+
+  function manageMenuModal() {
+    function body() {
+      return [
+        menuRow("📍", "Locations", function () { ui.modal = manageLocationsModal(); render(); }),
+        menuRow("👤", "Account", function () { ui.modal = accountModal(); render(); }),
+        menuRow("🗑️", "Recently Deleted", function () { ui.modal = trashModal(); render(); }),
+        el("div", { class: "modal-actions" }, [
+          el("button", { class: "btn btn-primary", onClick: closeModal }, ["Close"])
+        ])
+      ];
+    }
+    return modalShell("Manage", body());
+  }
+
   function accountModal() {
     function body() {
       var deviceName = getDeviceName() || "This device";
@@ -2510,7 +2642,168 @@
 
   function addItemModal() {
     var sku = "", name = "", category = "";
-    var rows = [{ id: uid(), size: "", locationId: "", qty: "" }];
+    var locationId = "";
+    var qty = "";
+    var selectedSizes = {}; // size -> true
+    var customSizeDraft = "";
+    var showCustomInput = false;
+
+    function allAvailableSizes() {
+      var used = {};
+      db.stock.forEach(function (s) { used[s.size] = true; });
+      var extra = Object.keys(used).filter(function (s) { return SIZE_PRESETS.indexOf(s) === -1; });
+      extra.sort();
+      return SIZE_PRESETS.concat(extra);
+    }
+
+    function computeCanSave() {
+      var anySelected = Object.keys(selectedSizes).some(function (s) { return selectedSizes[s]; });
+      return !!(name.trim() && locationId && anySelected && qty !== "" && Number(qty) >= 0);
+    }
+
+    function refreshButton() {
+      var btn = document.getElementById("save-product-btn-quick");
+      if (btn) btn.disabled = !computeCanSave();
+    }
+
+    function body() {
+      var skuInput = el("input", { placeholder: "TSH-001", value: sku, onInput: function (e) { sku = e.target.value; } });
+      var catInput = el("input", { placeholder: "T-Shirts", value: category, onInput: function (e) { category = e.target.value; } });
+      var nameInput = el("input", {
+        placeholder: "Classic Crew Tee", value: name,
+        onInput: function (e) { name = e.target.value; refreshButton(); }
+      });
+
+      var locSelect = el("select", {
+        onChange: function (e) {
+          if (e.target.value === "__new__") {
+            ui.modal = addLocationModal(function (newLoc) {
+              locationId = newLoc.id;
+              ui.modal = modalShell("Add a product", body());
+              render();
+            });
+            render();
+            return;
+          }
+          locationId = e.target.value;
+          refreshButton();
+        }
+      }, [el("option", { value: "" }, ["Select location…"])].concat(
+        db.locations.map(function (l) {
+          var opt = el("option", { value: l.id }, [l.code + (l.label ? " — " + l.label : "")]);
+          if (l.id === locationId) opt.selected = true;
+          return opt;
+        })
+      ).concat([el("option", { value: "__new__" }, ["+ New location…"])]));
+
+      var qtyInput = el("input", {
+        type: "number", min: "0", placeholder: "e.g. 5",
+        value: qty,
+        onInput: function (e) { qty = e.target.value; refreshButton(); }
+      });
+
+      var sizeGrid = el("div", { class: "size-chip-grid" });
+      allAvailableSizes().forEach(function (sz) {
+        var isSelected = !!selectedSizes[sz];
+        sizeGrid.appendChild(el("button", {
+          class: "size-chip" + (isSelected ? " size-chip-selected" : ""),
+          onClick: function () {
+            selectedSizes[sz] = !selectedSizes[sz];
+            ui.modal = modalShell("Add a product", body());
+            render();
+          }
+        }, [sz]));
+      });
+      sizeGrid.appendChild(el("button", {
+        class: "size-chip" + (showCustomInput ? " size-chip-selected" : ""),
+        onClick: function () {
+          showCustomInput = !showCustomInput;
+          ui.modal = modalShell("Add a product", body());
+          render();
+        }
+      }, ["+ Custom"]));
+
+      var customSizeInput = null;
+      if (showCustomInput) {
+        customSizeInput = el("div", { class: "custom-size-add-row" }, [
+          el("input", {
+            placeholder: "Custom size, e.g. 2XL",
+            value: customSizeDraft,
+            onInput: function (e) { customSizeDraft = e.target.value; }
+          }),
+          el("button", {
+            class: "btn btn-primary btn-sm",
+            onClick: function () {
+              var v = customSizeDraft.trim();
+              if (!v) return;
+              selectedSizes[v] = true;
+              customSizeDraft = "";
+              showCustomInput = false;
+              ui.modal = modalShell("Add a product", body());
+              render();
+            }
+          }, ["Add size"])
+        ]);
+      }
+
+      var selectedCount = Object.keys(selectedSizes).filter(function (s) { return selectedSizes[s]; }).length;
+
+      var saveBtn = el("button", {
+        class: "btn btn-primary",
+        id: "save-product-btn-quick",
+        onClick: function () {
+          if (!computeCanSave()) return;
+          var item = { id: uid(), sku: sku.trim(), name: name.trim(), category: category.trim(), createdAt: Date.now() };
+          db.items.push(item);
+          logAudit("add_item", "item", item.id, { name: item.name, sku: item.sku });
+          Object.keys(selectedSizes).forEach(function (sz) {
+            if (!selectedSizes[sz]) return;
+            db.stock.push({ id: uid(), itemId: item.id, locationId: locationId, size: sz, qty: Number(qty) });
+            logActivity("added", item.id, item.name, sz, Number(qty));
+          });
+          saveDB(db);
+          closeModal();
+        }
+      }, ["Save product (" + selectedCount + (selectedCount === 1 ? " size" : " sizes") + ")"]);
+      if (!computeCanSave()) saveBtn.disabled = true;
+
+      var switchLink = el("button", {
+        class: "btn btn-ghost btn-sm",
+        onClick: function () {
+          ui.modal = addItemModalDetailed({
+            sku: sku, name: name, category: category,
+            rows: Object.keys(selectedSizes).filter(function (s) { return selectedSizes[s]; }).map(function (sz) {
+              return { id: uid(), size: sz, locationId: locationId, qty: qty };
+            })
+          });
+          render();
+        }
+      }, ["Need different quantities per size? Switch to detailed mode →"]);
+
+      return [
+        el("div", { class: "grid-2" }, [
+          el("label", { class: "field" }, [el("span", {}, ["SKU (optional)"]), skuInput]),
+          el("label", { class: "field" }, [el("span", {}, ["Category (optional)"]), catInput])
+        ]),
+        el("label", { class: "field" }, [el("span", {}, ["Product name"]), nameInput]),
+        el("label", { class: "field" }, [el("span", {}, ["Location"]), locSelect]),
+        el("label", { class: "field" }, [el("span", {}, ["Sizes — tap all that apply"]), sizeGrid]),
+        customSizeInput,
+        el("label", { class: "field" }, [el("span", {}, ["Quantity (applies to every size selected above)"]), qtyInput]),
+        el("div", { class: "modal-actions" }, [
+          saveBtn,
+          el("button", { class: "btn btn-ghost", onClick: closeModal }, ["Cancel"])
+        ]),
+        switchLink
+      ];
+    }
+
+    return modalShell("Add a product", body());
+  }
+
+  function addItemModalDetailed(prefill) {
+    var sku = (prefill && prefill.sku) || "", name = (prefill && prefill.name) || "", category = (prefill && prefill.category) || "";
+    var rows = (prefill && prefill.rows) || [{ id: uid(), size: "", locationId: "", qty: "" }];
 
     function computeCanSave() {
       return !!(name.trim() && rows.some(function (r) { return r.size.trim() && r.locationId && r.qty !== "" && Number(r.qty) >= 0; }));
@@ -2652,7 +2945,7 @@
       ];
     }
 
-    return modalShell("Add a product", body());
+    return modalShell("Add a product (detailed)", body());
   }
 
   if (!unlocked) {
