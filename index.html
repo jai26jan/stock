@@ -88,6 +88,10 @@
   .filter-row select { flex: 1; min-width: 0; }
   .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--slate); cursor: pointer; }
   .checkbox-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--amber-deep); cursor: pointer; }
+  .active-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px;
+                        background: #FCEEDC; border: 1px solid #E8A33D; border-radius: 8px; padding: 8px 10px;
+                        font-size: 12.5px; color: #8a5d1a; font-weight: 600; }
+  .active-filter-clear { background: transparent; border: none; color: #8a5d1a; font-weight: 700; font-size: 12px; cursor: pointer; }
 
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
@@ -732,7 +736,7 @@
   }
 
   var db = loadDB();
-  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, sortBy: "name", attentionDismissed: false, modal: null };
+  var ui = { query: "", locationFilter: "", sizeFilter: "", hideZero: false, sortBy: "name", attentionDismissed: false, showLowStockOnly: false, modal: null };
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
@@ -789,7 +793,8 @@
         var sizeOk = !ui.sizeFilter || r.size === ui.sizeFilter;
         return locOk && sizeOk && r.qty > 0;
       });
-      return matchesQuery && matchesLoc && matchesSize && matchesQty;
+      var matchesLowStock = !ui.showLowStockOnly || rows.some(function (r) { return r.qty <= 3; });
+      return matchesQuery && matchesLoc && matchesSize && matchesQty && matchesLowStock;
     });
 
     function totalQtyFor(item) {
@@ -854,7 +859,14 @@
     if (data.lowStockCount > 0) {
       parts.push(el("button", {
         class: "attention-chip",
-        onClick: function () { ui.sizeFilter = ""; ui.hideZero = false; ui.query = ""; ui.locationFilter = ""; render(); scrollToLowStock(); }
+        onClick: function () {
+          ui.sizeFilter = "";
+          ui.hideZero = false;
+          ui.query = "";
+          ui.locationFilter = "";
+          ui.showLowStockOnly = true;
+          render();
+        }
       }, ["⚠️ " + data.lowStockCount + " " + (data.lowStockCount === 1 ? "product" : "products") + " low or out of stock"]));
     }
     if (data.slowMovers.length > 0) {
@@ -871,13 +883,6 @@
         onClick: function () { ui.attentionDismissed = true; render(); }
       }, ["✕"])
     ]);
-  }
-
-  function scrollToLowStock() {
-    setTimeout(function () {
-      var el2 = document.querySelector(".pill-out, .pill-low, .qty-out, .qty-low");
-      if (el2 && el2.scrollIntoView) el2.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 100);
   }
 
   function slowMoversModal(items) {
@@ -1003,10 +1008,21 @@
       el("span", {}, ["Hide zero quantity"])
     ]);
 
+    var activeFilterBanner = ui.showLowStockOnly
+      ? el("div", { class: "active-filter-row" }, [
+          el("span", {}, ["Showing only low / out of stock products"]),
+          el("button", {
+            class: "active-filter-clear",
+            onClick: function () { ui.showLowStockOnly = false; render(); }
+          }, ["✕ Clear"])
+        ])
+      : null;
+
     return el("div", { class: "filters", id: "filters" }, [
       el("div", { class: "search-box" }, [el("span", {}, ["🔍"]), searchInput]),
       el("div", { class: "filter-row" }, [locSelect, sizeSelect]),
-      hideZeroRow
+      hideZeroRow,
+      activeFilterBanner
     ]);
   }
 
