@@ -92,6 +92,8 @@
                         background: #FCEEDC; border: 1px solid #E8A33D; border-radius: 8px; padding: 8px 10px;
                         font-size: 12.5px; color: #8a5d1a; font-weight: 600; }
   .active-filter-clear { background: transparent; border: none; color: #8a5d1a; font-weight: 700; font-size: 12px; cursor: pointer; }
+  .threshold-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--slate); }
+  .threshold-row input { width: 48px; text-align: center; border: 1px solid #DAD6C9; border-radius: 6px; padding: 5px; font-size: 13px; }
 
   .content { padding: 16px; }
   .card { background: #fff; border: 1px solid #E4E0D3; border-radius: 12px; padding: 16px; margin-bottom: 14px; position: relative; }
@@ -408,6 +410,18 @@
   }
   function setDeviceName(name) {
     try { localStorage.setItem(DEVICE_NAME_KEY, name); } catch (e) {}
+  }
+
+  var LOW_STOCK_THRESHOLD_KEY = "stockmap_low_stock_threshold_v1";
+  function getLowStockThreshold() {
+    try {
+      var v = localStorage.getItem(LOW_STOCK_THRESHOLD_KEY);
+      var n = v === null ? 3 : parseInt(v, 10);
+      return isNaN(n) || n < 0 ? 3 : n;
+    } catch (e) { return 3; }
+  }
+  function setLowStockThreshold(n) {
+    try { localStorage.setItem(LOW_STOCK_THRESHOLD_KEY, String(Math.max(0, Math.floor(n)))); } catch (e) {}
   }
 
   function renderDeviceName(onDone) {
@@ -771,7 +785,7 @@
   }
 
   function totalUnits() { return db.stock.reduce(function (s, r) { return s + r.qty; }, 0); }
-  function lowCount() { return db.stock.filter(function (r) { return r.qty <= 3; }).length; }
+  function lowCount() { var t = getLowStockThreshold(); return db.stock.filter(function (r) { return r.qty <= t; }).length; }
   function locationsById() {
     var map = {};
     db.locations.forEach(function (l) { map[l.id] = l; });
@@ -793,7 +807,7 @@
         var sizeOk = !ui.sizeFilter || r.size === ui.sizeFilter;
         return locOk && sizeOk && r.qty > 0;
       });
-      var matchesLowStock = !ui.showLowStockOnly || rows.some(function (r) { return r.qty <= 3; });
+      var matchesLowStock = !ui.showLowStockOnly || rows.some(function (r) { return r.qty <= getLowStockThreshold(); });
       return matchesQuery && matchesLoc && matchesSize && matchesQty && matchesLowStock;
     });
 
@@ -828,7 +842,7 @@
   }
 
   function getAttentionData() {
-    var lowStockRows = db.stock.filter(function (r) { return r.qty <= 3; });
+    var lowStockRows = db.stock.filter(function (r) { return r.qty <= getLowStockThreshold(); });
     var lowStockItemIds = {};
     lowStockRows.forEach(function (r) { lowStockItemIds[r.itemId] = true; });
 
@@ -1008,6 +1022,20 @@
       el("span", {}, ["Hide zero quantity"])
     ]);
 
+    var thresholdInput = el("input", {
+      type: "number", min: "0",
+      value: getLowStockThreshold(),
+      onChange: function (e) {
+        setLowStockThreshold(e.target.value === "" ? 3 : Number(e.target.value));
+        render();
+      }
+    });
+    var thresholdRow = el("div", { class: "threshold-row" }, [
+      el("span", {}, ["Consider stock low at or below"]),
+      thresholdInput,
+      el("span", {}, ["units"])
+    ]);
+
     var activeFilterBanner = ui.showLowStockOnly
       ? el("div", { class: "active-filter-row" }, [
           el("span", {}, ["Showing only low / out of stock products"]),
@@ -1022,6 +1050,7 @@
       el("div", { class: "search-box" }, [el("span", {}, ["🔍"]), searchInput]),
       el("div", { class: "filter-row" }, [locSelect, sizeSelect]),
       hideZeroRow,
+      thresholdRow,
       activeFilterBanner
     ]);
   }
@@ -1069,7 +1098,7 @@
     var cls = "pill";
     var prefix = "";
     if (qty === 0) { cls += " pill-out"; prefix = "⚠ "; }
-    else if (qty <= 3) { cls += " pill-low"; }
+    else if (qty <= getLowStockThreshold()) { cls += " pill-low"; }
     return el("span", { class: cls }, [prefix + qty + " " + (qty === 1 ? "unit" : "units")]);
   }
 
@@ -1150,7 +1179,7 @@
       onClick: function () { updateQty(row, row.qty + 1); }
     }, ["+"]);
 
-    var wrap = el("div", { class: "qty-stepper" + (row.qty === 0 ? " qty-out" : row.qty <= 3 ? " qty-low" : "") }, [
+    var wrap = el("div", { class: "qty-stepper" + (row.qty === 0 ? " qty-out" : row.qty <= getLowStockThreshold() ? " qty-low" : "") }, [
       minusBtn, qtyInput, plusBtn
     ]);
     return wrap;
@@ -2374,7 +2403,7 @@
                 onClick: function () { quickAdjust(r, 1); }
               }, ["+"]);
 
-              sizeRow.appendChild(el("div", { class: "quick-size-pill" + (r.qty === 0 ? " quick-pill-out" : r.qty <= 3 ? " quick-pill-low" : "") }, [
+              sizeRow.appendChild(el("div", { class: "quick-size-pill" + (r.qty === 0 ? " quick-pill-out" : r.qty <= getLowStockThreshold() ? " quick-pill-low" : "") }, [
                 minusBtn,
                 el("div", { class: "quick-size-info" }, [
                   el("span", { class: "quick-size-label" }, [r.size]),
